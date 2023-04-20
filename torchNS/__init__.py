@@ -11,3 +11,4 @@ from .gdnest import GDNest
 from .slicednest_v2 import SlicedNest
 from .polychord import Polychord
 from .reflectnest import ReflectNest
+from .galilean import GaliNest

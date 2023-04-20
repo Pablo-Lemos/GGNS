@@ -269,6 +269,7 @@ class NestedSampler:
 
         # Add a new sample
         newsample = self.find_new_sample(sample.get_logL())
+        assert newsample.get_logL() > sample.get_logL(), "New sample has lower likelihood than old one"
         self.live_points.add_nspoint(newsample)
 
     def _collect_priors(self):
