@@ -71,8 +71,9 @@ class NSPoints:
         self.weights = torch.ones(size=(0,), device=device)
         self.logL = torch.ones(size=(0,), device=device)
         self.currSize = 0
+        self.labels = torch.zeros(size=(0,), device=device, dtype=torch.int64)
 
-    def add_samples(self, values, logL, weights):
+    def add_samples(self, values, logL, weights, labels=None):
         assert all(isinstance(i, torch.Tensor)
                    for i in (values, logL, weights)), "Inputs must be tensors"
         assert values.shape[1] == self.nparams, "Wrong dimensions"
@@ -81,7 +82,8 @@ class NSPoints:
         self.values = torch.cat([self.values, values], dim=0)
         self.logL = torch.cat([self.logL, logL], dim=0)
         self.weights = torch.cat([self.weights, weights], dim=0)
-
+        labels = torch.zeros(size=(values.shape[0],), device=values.device, dtype=torch.int64) if labels is None else labels
+        self.labels = torch.cat([self.labels, labels], dim=0)
         self.currSize += values.shape[0]
 
     def add_nspoint(self, nspoint):
@@ -91,23 +93,29 @@ class NSPoints:
         self.values = torch.cat([self.values, nspoint.values], dim=0)
         self.logL = torch.cat([self.logL, nspoint.logL], dim=0)
         self.weights = torch.cat([self.weights, nspoint.weights], dim=0)
+        self.labels = torch.cat([self.labels, nspoint.labels], dim=0)
         self.currSize += nspoint.currSize
 
     def _sort(self):
         self.logL, indices = torch.sort(self.logL)
         self.weights = self.weights[indices]
         self.values = self.values[indices]
+        self.labels = self.labels[indices]
 
     def pop(self):
         self._sort()
         sample = NSPoints(self.nparams)
         sample.add_samples(values=self.values[:1],
                            weights=self.weights[:1],
-                           logL=self.logL[:1])
-        self.values, self.weights, self.logL = self.values[1:], \
-                                               self.weights[1:], self.logL[1:]
+                           logL=self.logL[:1],
+                           labels=self.labels[:1])
+        self.values, self.weights, self.logL, self.labels = self.values[1:], self.weights[1:], self.logL[1:], \
+                                                            self.labels[1:]
         self.currSize -= 1
         return sample
+
+    def set_labels(self, labels):
+        self.labels = torch.as_tensor(labels, device=self.values.device, dtype=torch.int64)
 
     def get_logL(self):
         self._sort()
@@ -120,6 +128,10 @@ class NSPoints:
     def get_values(self):
         self._sort()
         return self.values
+
+    def get_labels(self):
+        self._sort()
+        return self.labels
 
     def get_size(self):
         return self.currSize

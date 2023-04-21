@@ -7,9 +7,9 @@ March, 2020
 
 import torch
 import time
-from torchNS.utils import uniform
+from torchNS.utils import uniform, gmm_bic
 from torchNS.param import Param, NSPoints
-from getdist import MCSamples, plots
+from getdist import MCSamples
 
 # Default floating point type
 dtype = torch.float32
@@ -55,7 +55,7 @@ class NestedSampler:
     '''
 
     def __init__(
-            self, loglike, params, nlive=50, tol=0.1, max_nsteps=1000000, verbose=True, device=None):
+            self, loglike, params, nlive=50, tol=0.1, max_nsteps=1000000, clustering=False, verbose=True, device=None):
 
         '''
         Parameters
@@ -95,6 +95,8 @@ class NestedSampler:
         self.err_logZ = -1e1000  # This is equivalent to starting with Z = 0
         self.like_evals = 0
         self.verbose = verbose
+        self.clustering = clustering
+        self.n_clusters = 1
 
     def sample_prior(self, npoints, initial_step=False):
         ''' Produce samples from the prior distributions
@@ -243,6 +245,15 @@ class NestedSampler:
 
         return newsample
 
+    def find_clusters(self):
+        ''' Run a clustering algorithm to find how many clusters are present in the posterior'''
+        x = self.live_points.get_values()
+        n_clusters, labels = gmm_bic(x, max_components=self.nlive//2)
+        if n_clusters != self.n_clusters:
+            print('Found {} clusters'.format(n_clusters))
+            self.n_clusters = n_clusters
+        self.live_points.set_labels(labels)
+
     def move_one_step(self):
         ''' Find highest log like, get rid of that point, and sample a new one '''
 
@@ -340,6 +351,9 @@ class NestedSampler:
                 print(nsteps, 'completed, logZ =', self.logZ.item(), ', epsilon =',
                       epsilon.item())
             nsteps += 1
+
+            if self.clustering and nsteps % self.nlive == 0:
+                self.find_clusters()
 
         if nsteps == self.max_nsteps:
             print('WARNING: Target tolerance was not achieved after', nsteps,

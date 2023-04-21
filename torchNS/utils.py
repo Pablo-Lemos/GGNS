@@ -1,4 +1,21 @@
 import torch
+from sklearn.mixture import GaussianMixture
+
+def gmm_bic(X, max_components=None):
+    curr_bic = 1e300
+    n_components = 0
+    max_components = X.shape[0] if max_components is None else max_components
+    converged = False
+    prev_gmm = None
+    while not converged:
+        n_components += 1
+        gmm = GaussianMixture(n_components=n_components)
+        gmm.fit(X)
+        new_bic = gmm.bic(X)
+        converged = new_bic > curr_bic or n_components >= max_components
+        curr_bic = new_bic.copy()
+        prev_gmm = gmm
+    return prev_gmm.n_components, prev_gmm.fit_predict(X)
 
 def uniform(low, high, size, dtype):
     u = torch.rand(size, dtype = dtype)
@@ -24,3 +41,4 @@ def linspace(start: torch.Tensor, stop: torch.Tensor, num: int):
     out = start[None] + steps * (stop - start)[None]
 
     return out
+

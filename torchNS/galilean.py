@@ -9,8 +9,8 @@ dtype = torch.float32
 
 
 class GaliNest(NestedSampler):
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, verbose=True, score=None, device=None):
-        super().__init__(loglike, params, nlive, tol, max_nsteps, verbose, device)
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
+        super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
 
         self.acceptance_rate = 1.0
         self.n_tries = 0
@@ -205,7 +205,9 @@ if __name__ == "__main__":
     ns = GaliNest(
         nlive=25*len(params),
         loglike=get_loglike,
-        params=params)
+        params=params,
+        clustering=True
+    )
 
     ns.run()
 
@@ -219,4 +221,4 @@ if __name__ == "__main__":
     true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
     g = plots.get_subplot_plotter()
     g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    g.export('test_reflect.png')
+    g.export('test_galilean.png')
