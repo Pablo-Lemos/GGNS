@@ -102,8 +102,9 @@ class GaliNest(NestedSampler):
         Returns:
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
-        idx = randint(1, self.nlive - 2)
-        x = self.live_points.get_values()[idx]
+        # idx = randint(1, self.nlive - 2)
+        # x = self.live_points.get_values()[idx]
+        x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
         num_steps = self.n_repeats
         alpha = 1
         dt = 0.1
@@ -123,9 +124,9 @@ class GaliNest(NestedSampler):
 
             if not accepted:
                 num_fails += 1
-                idx = randint(1, self.nlive - 2)
-                x = self.live_points.get_values()[idx]
-                #dt = dt*0.9
+                # idx = randint(1, self.nlive - 2)
+                # x = self.live_points.get_values()[idx]
+                x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
 
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
 

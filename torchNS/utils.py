@@ -17,9 +17,11 @@ def gmm_bic(X, max_components=None):
         prev_gmm = gmm
     return prev_gmm.n_components, prev_gmm.fit_predict(X)
 
+
 def uniform(low, high, size, dtype):
     u = torch.rand(size, dtype = dtype)
     return u*(high-low)+low
+
 
 @torch.jit.script
 def linspace(start: torch.Tensor, stop: torch.Tensor, num: int):

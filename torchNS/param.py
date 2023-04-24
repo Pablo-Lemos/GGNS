@@ -127,20 +127,26 @@ class NSPoints:
                            labels=self.labels[idx])
         return sample
 
-    def get_random_sample(self):
+    def get_random_sample(self, volumes):
+        sample = NSPoints(self.nparams)
+
         if torch.max(self.labels) == 0:
             idx = randint(0, self.currSize-1)
+
+            sample.add_samples(values=self.values[idx:idx+1],
+                               weights=self.weights[idx:idx+1],
+                               logL=self.logL[idx:idx+1],
+                               labels=self.labels[idx:idx+1])
+
         else:
-            counts = self.count_labels()
-            label = torch.multinomial(counts / torch.sum(counts), 1)
+            label = torch.multinomial(volumes / torch.sum(volumes), 1)
             subset = self.label_subset(label)
             idx = randint(0, subset.currSize-1)
 
-        sample = NSPoints(self.nparams)
-        sample.add_samples(values=self.values[idx],
-                           weights=self.weights[idx],
-                           logL=self.logL[idx],
-                           labels=self.labels[idx])
+            sample.add_samples(values=subset.values[idx:idx+1],
+                               weights=subset.weights[idx:idx+1],
+                               logL=subset.logL[idx:idx+1],
+                               labels=subset.labels[idx:idx+1])
         return sample
 
     def set_labels(self, labels):
