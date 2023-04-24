@@ -9,6 +9,7 @@ import torch
 import time
 from torchNS.utils import uniform, gmm_bic
 from torchNS.param import Param, NSPoints
+from torchNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples
 
 # Default floating point type
@@ -77,16 +78,13 @@ class NestedSampler:
                 A boolean indicating if the algorithm should print information as it runs
             '''
 
-            if device is None:
-                self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
 
             self.loglike = loglike
             self.params = params
-            self.nlive = nlive
+            self.nlive_ini = nlive
             self.tol = tol
             self.max_nsteps = max_nsteps
-
-            log_minus_inf = torch.log(torch.tensor(1e-1000, device=self.device))
 
             self.nparams = len(params)
             self.paramnames = []
@@ -99,20 +97,8 @@ class NestedSampler:
             self.verbose = verbose
             self.clustering = clustering
             self.n_clusters = 1
-            #self.summaries = torch.log(torch.tensor([1e-1000, 1e-1000, 1e-1000, 1., 1.], device=self.device))
-            self.summaries = [log_minus_inf.clone(),
-                              log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device),
-                              torch.zeros(self.n_clusters, device=self.device),
-                              ]
-            self.errors = [log_minus_inf.clone(),
-                           log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device),
-                           log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device),
-                           torch.ones(self.n_clusters, device=self.device),
-                           torch.log(torch.eye(self.n_clusters, device=self.device) + 1e-1000)
-                           ]
-            #self.log_cluster_volumes = -1e1000 * torch.ones(self.n_clusters, device=self.device)
+            self.summaries = NestedSamplingSummaries(device=self.device)
             self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
-
 
         def sample_prior(self, npoints, initial_step=False):
             ''' Produce samples from the prior distributions
@@ -180,10 +166,10 @@ class NestedSampler:
               The corresponding prior volume
             '''
 
-            Xi = torch.exp(-i / torch.tensor(self.nlive, dtype=dtype, device=self.device))
+            Xi = torch.exp(-i / torch.tensor(self.get_nlive(), dtype=dtype, device=self.device))
             return Xi
 
-        def get_weight(self):
+        def get_weight(self, sample):
             ''' Calculate the weight at a given iteration, calculated as the number of
             dead points
 
@@ -193,12 +179,23 @@ class NestedSampler:
               The sample weight
             '''
 
-            iteration = self.dead_points.get_size()
-            X_plus = self.get_prior_volume(iteration + 2)
-            X_minus = self.get_prior_volume(iteration)
-
-            weight = 0.5 * (X_minus - X_plus)
+            # iteration = self.dead_points.get_size()
+            # X_plus = self.get_prior_volume(iteration + 2)
+            # X_minus = self.get_prior_volume(iteration)
+            #
+            # weight = 0.5 * (X_minus - X_plus)
+            label = sample.get_labels().item()
+            if label > 0:
+                print('label = ', label)
+            np = self.live_points.count_labels()[label]
+            logweight = self.summaries.get_logXp()[label] - torch.log(torch.tensor(np, device=self.device))
+            weight = torch.exp(logweight)
             return weight
+
+        def get_nlive(self):
+            ''' Return the number of live points
+            '''
+            return self.live_points.get_size()
 
         def add_logZ_live(self):
             ''' Add the contribution from the live points to the Evidence calculation
@@ -208,16 +205,16 @@ class NestedSampler:
             iteration = self.dead_points.get_size()
 
             # Find the weight as the prior volume
-            Xm = self.get_prior_volume(iteration) * torch.ones(self.nlive, dtype=dtype, device=self.device)
+            Xm = self.get_prior_volume(iteration) * torch.ones(self.get_nlive(), dtype=dtype, device=self.device)
 
             # get the evidence contribution
             logZ_live = torch.logsumexp(
                 (self.live_points.get_logL() + torch.log(Xm)),0) - torch.log(
-                    torch.tensor(self.nlive, dtype=dtype, device=self.device))
+                    torch.tensor(self.get_nlive(), dtype=dtype, device=self.device))
 
             for logL, label in zip(self.live_points.get_logL(), self.live_points.get_labels()):
-                self._update_summaries(logL.reshape(1), label.item())
-                self._update_errors(logL.reshape(1), label.item())
+                np = self.live_points.count_labels()[label]
+                self.summaries.update(logL, label, np)
 
             # Add to the current evidence
             self.logZ = torch.logsumexp(torch.tensor([self.logZ, logZ_live], device=self.device), 0)
@@ -267,96 +264,33 @@ class NestedSampler:
 
         def find_clusters(self):
             ''' Run a clustering algorithm to find how many clusters are present in the posterior'''
-            x = self.live_points.get_values()
-            n_clusters, labels = gmm_bic(x, max_components=self.nlive//2)
+            # x = self.live_points.get_values()
+            # n_clusters, labels = gmm_bic(x, max_components=self.get_nlive()//2)
+            #
+            # self.live_points.set_labels(labels)
+            # #self.cluster_volumes = self.live_points.count_labels()/self.get_nlive() * torch.exp(self.summaries[3])
+            # self.cluster_volumes = torch.exp(self.summaries[2])
 
-            self.live_points.set_labels(labels)
-            self.cluster_volumes = self.live_points.count_labels()/self.nlive * torch.exp(self.summaries[3])
-            print(f'Volume fractions {(self.cluster_volumes/torch.sum(self.cluster_volumes)).detach().numpy()}')
+            for i in range(self.n_clusters):
+                x = self.live_points.get_values()[self.live_points.get_labels() == i]
+                n_clusters, labels = gmm_bic(x, max_components=x.shape[0]//2)
+                if n_clusters > 1:
+                    labels[labels > 0] += self.n_clusters - 1
+                    self.live_points.set_labels(labels, idx=self.live_points.get_labels() == i)
+                    self.n_clusters += n_clusters - 1
+
 
             if n_clusters != self.n_clusters:
-                #print(f'Found {n_clusters} clusters with volume fractions {(self.cluster_volumes/torch.sum(self.cluster_volumes)).detach().numpy()}')
+                print(f'Found {n_clusters} clusters with volume fractions {(self.cluster_volumes/torch.sum(self.cluster_volumes)).detach().numpy()}')
                 self.n_clusters = n_clusters
-
-        def _update_summaries(self, logL, label):
-            ''' Update the summary statistics for the evidence calculation'''
-
-            np = self.live_points.count_labels()[label]
-            # PolyChord evidence calculation
-            # log Z
-            self.summaries[0] = torch.logsumexp(torch.cat([self.summaries[0].reshape(1),
-                                                           logL + self.summaries[2][label] -
-                                                           torch.log(torch.tensor(np + 1, device=self.device))]), 0)
-
-            # log Zp
-            self.summaries[1][label] = torch.logsumexp(torch.cat([self.summaries[0].reshape(1),
-                                                           logL + self.summaries[2][label] -
-                                                           torch.log(torch.tensor(np + 1, device=self.device))]), 0)
-
-            # log Xp
-            self.summaries[2][label] = self.summaries[2][label] + torch.log(torch.tensor(np / (np + 1), device=self.device))
-
-        def _update_errors(self, logL, label):
-            ''' Update the summary statistics for the evidence calculation'''
-
-            np = self.live_points.count_labels()[label]
-            # PolyChord evidence calculation
-            # log Z^2
-            self.errors[0] = torch.logsumexp(torch.cat([self.errors[0].reshape(1),
-                                                        self.errors[2][label] + logL + torch.log(torch.tensor(2 / (np + 1), device=self.device)),
-                                                        self.errors[4][label, label] + 2 * logL + torch.log(torch.tensor( 2 / (np + 1) / (np + 2), device=self.device))
-                                                        ]), 0)
-
-            # log Zp^2
-            self.errors[1][label] = torch.logsumexp(torch.cat([self.errors[0].reshape(1),
-                                                        self.errors[2][label] + logL + torch.log(torch.tensor(2 / (np + 1), device=self.device)),
-                                                        self.errors[4][label, label] + 2 * logL + torch.log(torch.tensor(2 / (np + 1) / (np + 2), device=self.device))
-                                                        ]), 0)
-
-            # log ZXp
-            self.errors[2][label] = torch.logsumexp(torch.cat([self.errors[2][label].reshape(1) + torch.log(torch.tensor(np / (np + 1), device=self.device)),
-                                                        self.errors[4][label, label] + logL + torch.log(torch.tensor(np / (np + 1) / (np + 2), device=self.device))
-                                                        ]), 0)
-
-            # log ZXq
-            for l in range(self.n_clusters):
-                if l != label:
-                    self.errors[2][l] = torch.logsumexp(torch.cat([self.errors[2][label].reshape(1),
-                                                        self.errors[4][label, l] + logL - torch.log(torch.tensor((np + 1), device=self.device))
-                                                        ]), 0)
-
-            # log ZpXp
-            self.errors[3][label] = torch.logsumexp(torch.cat([self.errors[3][label].reshape(1) + torch.log(torch.tensor(np / (np + 1), device=self.device)),
-                                                        self.errors[4][label, label] + logL + torch.log(torch.tensor(np / (np + 1) / (np + 2), device=self.device))
-                                                        ]), 0)
-
-            # log Xp^2
-            self.errors[4][label, label] = self.errors[4][label, label] + torch.log(torch.tensor(np / (np + 2), device=self.device))
-
-            # log XpXq
-            for l in range(self.n_clusters):
-                if l != label:
-                    self.errors[4][label, l] = self.errors[4][label, l] + torch.log(
-                        torch.tensor(np / (np + 1), device=self.device))
-
 
         def get_cluster_live_points(self, label):
             np = self.live_points.count_labels()[label]
             return np
 
-
-        def move_one_step(self):
-            ''' Find highest log like, get rid of that point, and sample a new one '''
-
-
+        def kill_point(self):
             sample = self.live_points.pop()
-            label = sample.get_labels().item()
-            np = self.live_points.count_labels()[label]
-            logweight = self.summaries[2][label] - torch.log(torch.tensor(np, device=self.device))
-            weight = torch.exp(logweight)
-            #print(weight, self.get_weight())
-            sample.weights = weight * torch.ones_like(sample.weights, device=self.device)
-            #sample.weights = self.get_weight()*torch.ones_like(sample.weights, device=self.device)
+            sample.weights = self.get_weight(sample)*torch.ones_like(sample.weights, device=self.device)
             self.dead_points.add_nspoint(sample)
 
             # Add to the log evidence
@@ -364,18 +298,28 @@ class NestedSampler:
                 sample.get_logL() + torch.log(sample.get_weights())])
             self.logZ = torch.logsumexp(t, 0)
 
-            self._update_summaries(sample.get_logL(), sample.get_labels().item())
-            self._update_errors(sample.get_logL(), sample.get_labels().item())
+            # Update the summaries
+            label = sample.get_labels().item()
+            np = self.live_points.count_labels()[label]
+            self.summaries.update(sample.get_logL(), label, np)
 
             # Update cluster volumes
             if self.clustering:
                 label = sample.get_labels().item()
+                np = self.live_points.count_labels()[label]
                 self.cluster_volumes[label] = self.cluster_volumes[label] * np / (np + 1)
+            return sample
 
+        def add_point(self, min_logL):
             # Add a new sample
-            newsample = self.find_new_sample(sample.get_logL())
-            assert newsample.get_logL() > sample.get_logL(), "New sample has lower likelihood than old one"
+            newsample = self.find_new_sample(min_logL)
+            assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
             self.live_points.add_nspoint(newsample)
+
+        def move_one_step(self):
+            ''' Find highest log like, get rid of that point, and sample a new one '''
+            sample = self.kill_point()
+            self.add_point(sample.get_logL())
 
         def _collect_priors(self):
             """
@@ -389,13 +333,6 @@ class NestedSampler:
 
             return prior_array
 
-        def _get_mean_logZ(self):
-            return 2 * self.summaries[0] - 0.5 * self.errors[0]
-
-        def _get_var_logZ(self):
-            return self.errors[0] - 2 * self.summaries[0]
-
-
         def terminate(self, run_time):
             ''' Terminates the algorithm by adding the final live points to the dead
             points, calculating the final log evidence and acceptance rate, and printing
@@ -406,19 +343,21 @@ class NestedSampler:
               The time taken for the algorithm to finish, in seconds
             '''
 
-            weights_live = self.get_weight()
-            #TODO: change this (assigning to object attribute)
-            self.live_points.weights = weights_live*torch.ones_like(
-                self.live_points.get_weights(), device=self.device)
+            # weights_live = self.get_weight()
+            # self.live_points.weights = weights_live*torch.ones_like(
+            #     self.live_points.get_weights(), device=self.device)
+            #
+            # self.dead_points.add_nspoint(self.live_points)
+            #
+            # # Add the contribution from the live points to the evidence
+            # self.add_logZ_live()
+            #
+            # # Convert the prior weights to posterior weights
+            # self.dead_points.weights *= torch.exp(
+            #     self.dead_points.get_logL() - self.logZ)
 
-            self.dead_points.add_nspoint(self.live_points)
-
-            # Add the contribution from the live points to the evidence
-            self.add_logZ_live()
-
-            # Convert the prior weights to posterior weights
-            self.dead_points.weights *= torch.exp(
-                self.dead_points.get_logL() - self.logZ)
+            for _ in range(self.get_nlive()-1):
+                self.kill_point()
 
             acc_rate = self.dead_points.get_size() / float(self.like_evals)
 
@@ -429,7 +368,8 @@ class NestedSampler:
                 print('Acceptance rate =', acc_rate)
                 print('Number of likelihood evaluations =', self.like_evals)
                 print('logZ =', self.logZ, '+/-', self.err_logZ)
-                print('PolyChord logZ =', self._get_mean_logZ().item(), '+/-', self._get_var_logZ().item()**0.5)
+                print('PolyChord logZ =', self.summaries.get_mean_logZ().item(), '+/-',
+                      self.summaries.get_var_logZ().item()**0.5)
                 print('---------------------------------------------')
 
         def run(self):
@@ -438,7 +378,7 @@ class NestedSampler:
             start_time = time.time()
 
             # Generate live points
-            self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive,
+            self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini,
                                                initial_step=True))
 
             # Run the algorithm
@@ -454,7 +394,7 @@ class NestedSampler:
                           epsilon.item())
                 nsteps += 1
 
-                if self.clustering and nsteps % self.nlive == 0:
+                if self.clustering and nsteps % self.get_nlive() == 0:
                     self.find_clusters()
 
             if nsteps == self.max_nsteps:
@@ -504,6 +444,7 @@ class NestedSampler:
             if path is not None:
                 g.export(path)
             return g
+
 
 if __name__ == "__main__":
     ndims = 2

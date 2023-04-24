@@ -1,4 +1,5 @@
 from .param import Param
+from .summaries import NestedSamplingSummaries
 from .nested_sampling import NestedSampler
 from .multinest import MultiNest
 from .flownest import FlowNest
