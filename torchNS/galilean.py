@@ -7,7 +7,6 @@ from numpy import clip
 # Default floating point type
 dtype = torch.float32
 
-
 class GaliNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
@@ -103,10 +102,9 @@ class GaliNest(NestedSampler):
         Returns:
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
-
-        num_steps = self.n_repeats
         idx = randint(1, self.nlive - 2)
         x = self.live_points.get_values()[idx]
+        num_steps = self.n_repeats
         alpha = 1
         dt = 0.1
 
@@ -185,7 +183,6 @@ if __name__ == "__main__":
                                                      0.2*torch.ones(ndims)))
 
     true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
-    #print(true_samples.shape)
 
     def get_loglike(theta):
         lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))

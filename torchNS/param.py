@@ -1,4 +1,5 @@
 import torch
+from random import randint
 
 # Default floating point type
 dtype = torch.float32
@@ -112,6 +113,34 @@ class NSPoints:
         self.values, self.weights, self.logL, self.labels = self.values[1:], self.weights[1:], self.logL[1:], \
                                                             self.labels[1:]
         self.currSize -= 1
+        return sample
+
+    def count_labels(self):
+        return torch.bincount(self.labels)
+
+    def label_subset(self, label):
+        idx = self.labels == label
+        sample = NSPoints(self.nparams)
+        sample.add_samples(values=self.values[idx],
+                           weights=self.weights[idx],
+                           logL=self.logL[idx],
+                           labels=self.labels[idx])
+        return sample
+
+    def get_random_sample(self):
+        if torch.max(self.labels) == 0:
+            idx = randint(0, self.currSize-1)
+        else:
+            counts = self.count_labels()
+            label = torch.multinomial(counts / torch.sum(counts), 1)
+            subset = self.label_subset(label)
+            idx = randint(0, subset.currSize-1)
+
+        sample = NSPoints(self.nparams)
+        sample.add_samples(values=self.values[idx],
+                           weights=self.weights[idx],
+                           logL=self.logL[idx],
+                           labels=self.labels[idx])
         return sample
 
     def set_labels(self, labels):

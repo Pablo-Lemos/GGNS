@@ -97,6 +97,7 @@ class NestedSampler:
         self.verbose = verbose
         self.clustering = clustering
         self.n_clusters = 1
+        self.summaries = torch.log(torch.tensor([1e-1000, 1e-1000, 1e-1000, 1., 1.], device=self.device))
 
     def sample_prior(self, npoints, initial_step=False):
         ''' Produce samples from the prior distributions
@@ -199,6 +200,9 @@ class NestedSampler:
             (self.live_points.get_logL() + torch.log(Xm)),0) - torch.log(
                 torch.tensor(self.nlive, dtype=dtype, device=self.device))
 
+        for logL in self.live_points.get_logL():
+            self._update_summaries(logL.reshape(1))
+
         # Add to the current evidence
         self.logZ = torch.logsumexp(torch.tensor([self.logZ, logZ_live], device=self.device), 0)
 
@@ -254,6 +258,31 @@ class NestedSampler:
             self.n_clusters = n_clusters
         self.live_points.set_labels(labels)
 
+    def _update_summaries(self,logL):
+        # PolyChord evidence calculation
+        # log Z
+        self.summaries[0] = torch.logsumexp(torch.cat([self.summaries[0].reshape(1),
+                                                       logL + self.summaries[3] -
+                                                       torch.log(torch.tensor(self.nlive + 1, device=self.device))]), 0)
+
+        # log Z^2
+        self.summaries[1] = torch.logsumexp(torch.cat([self.summaries[1].reshape(1),
+                                                       self.summaries[2] + logL + torch.log(torch.tensor(2 / (self.nlive + 1), device=self.device)),
+                                                       self.summaries[4] + 2 * logL - torch.log(torch.tensor((self.nlive + 1) * (self.nlive + 2), device=self.device))
+                                                       ]), 0)
+
+        # log ZX
+        self.summaries[2] = torch.logsumexp(torch.cat([self.summaries[2].reshape(1) + torch.log(torch.tensor(self.nlive / (self.nlive + 1), device=self.device)),
+                                                       self.summaries[4] + logL + torch.log(torch.tensor(self.nlive / (self.nlive + 1) / (self.nlive + 2), device=self.device))
+                                                       ]), 0)
+
+        # log X
+        self.summaries[3] = self.summaries[3] + torch.log(torch.tensor(self.nlive / (self.nlive + 1), device=self.device))
+
+        # log X^2
+        self.summaries[4] = self.summaries[4] + torch.log(torch.tensor(self.nlive / (self.nlive + 2), device=self.device))
+
+
     def move_one_step(self):
         ''' Find highest log like, get rid of that point, and sample a new one '''
 
@@ -274,9 +303,11 @@ class NestedSampler:
         self.dead_points.add_nspoint(sample)
 
         # Add to the log evidence
-        t = torch.cat([torch.tensor([self.logZ], device=self.device),
+        t = torch.cat([torch.as_tensor([self.logZ], device=self.device),
             sample.get_logL() + torch.log(sample.get_weights())])
         self.logZ = torch.logsumexp(t, 0)
+
+        self._update_summaries(sample.get_logL())
 
         # Add a new sample
         newsample = self.find_new_sample(sample.get_logL())
@@ -294,6 +325,13 @@ class NestedSampler:
             prior_array[i] = torch.tensor(param.get_prior(), device=self.device)
 
         return prior_array
+
+    def _get_mean_logZ(self):
+        return 2 * self.summaries[0] - 0.5 * self.summaries[1]
+
+    def _get_var_logZ(self):
+        return self.summaries[1] - 2 * self.summaries[0]
+
 
     def terminate(self, run_time):
         ''' Terminates the algorithm by adding the final live points to the dead
@@ -328,6 +366,7 @@ class NestedSampler:
             print('Acceptance rate =', acc_rate)
             print('Number of likelihood evaluations =', self.like_evals)
             print('logZ =', self.logZ, '+/-', self.err_logZ)
+            print('PolyChord logZ =', self._get_mean_logZ().item(), '+/-', self._get_var_logZ().item()**0.5)
             print('---------------------------------------------')
 
     def run(self):
@@ -405,31 +444,32 @@ class NestedSampler:
 
 if __name__ == "__main__":
     ndims = 2
-    mvn1 = torch.distributions.MultivariateNormal(loc=10*torch.ones(ndims),
-                                                 covariance_matrix=torch.diag(
-                                                     0.5*torch.ones(ndims)))
+    mvn1 = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims),
+                                                  covariance_matrix=torch.diag(
+                                                      0.2 * torch.ones(ndims)))
 
-    mvn2 = torch.distributions.MultivariateNormal(loc=-10*torch.ones(ndims),
-                                                 covariance_matrix=torch.diag(
-                                                     0.5*torch.ones(ndims)))
+    mvn2 = torch.distributions.MultivariateNormal(loc=-1 * torch.ones(ndims),
+                                                  covariance_matrix=torch.diag(
+                                                      0.2 * torch.ones(ndims)))
+
+    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
 
     def get_loglike(theta):
-        lp = mvn1.log_prob(theta) + mvn2.log_prob(theta)
+        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1,
+                             keepdim=False) - torch.log(torch.tensor(2.0))
         return lp
 
 
-    p1 = Param(
-        name='p1',
-        prior_type='Uniform',
-        prior=(-25, 25),
-        label='p_1')
-    p2 = Param(
-        name='p2',
-        prior_type='Uniform',
-        prior=(-25, 25),
-        label='p_2')
+    params = []
 
-    params = [p1, p2]
+    for i in range(ndims):
+        params.append(
+            Param(
+                name=f'p{i}',
+                prior_type='Uniform',
+                prior=(-5, 5),
+                label=f'p_{i}')
+        )
 
     ns = NestedSampler(
         nlive=50,
@@ -440,11 +480,12 @@ if __name__ == "__main__":
 
     # The true logZ is the inverse of the prior volume
     import numpy as np
-    print('True logZ = ', np.log(1 / 100.))
+    print('True logZ = ', np.log(1 / 10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
-    from getdist import plots
+    from getdist import plots, MCSamples
     samples = ns.convert_to_getdist()
+    true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
     g = plots.get_subplot_plotter()
-    g.triangle_plot([samples], filled=True)
+    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
     g.export('test.png')
