@@ -229,16 +229,18 @@ class NestedSampler:
             '''
 
             # Find index with minimun likelihood
-            max_logL = torch.max(self.live_points.get_logL())
+            #max_logL = torch.max(self.live_points.get_logL())
+            mean_logL = torch.mean(self.live_points.get_logL())
 
             # Find current iteration
-            iteration = self.dead_points.get_size()
+            #iteration = self.dead_points.get_size()
 
             # Get prior volume
-            Xi = self.get_prior_volume(iteration)
+            #Xi = self.get_prior_volume(iteration)
+            logXi = self.summaries.get_logXp()
 
             # Get delta_logZ as log(Xi*L)
-            delta_logZ = torch.log(Xi) + max_logL
+            delta_logZ = logXi + mean_logL
 
             return delta_logZ
 
