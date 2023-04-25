@@ -188,7 +188,7 @@ class NestedSampler:
             if label > 0:
                 print('label = ', label)
             np = self.live_points.count_labels()[label]
-            logweight = self.summaries.get_logXp()[label] - torch.log(torch.tensor(np, device=self.device))
+            logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(np, device=self.device))
             weight = torch.exp(logweight)
             return weight
 
@@ -273,15 +273,18 @@ class NestedSampler:
 
             for i in range(self.n_clusters):
                 x = self.live_points.get_values()[self.live_points.get_labels() == i]
+                if x.shape[0] < 2:
+                    continue
                 n_clusters, labels = gmm_bic(x, max_components=x.shape[0]//2)
                 if n_clusters > 1:
-                    labels[labels > 0] += self.n_clusters - 1
-                    self.live_points.set_labels(labels, idx=self.live_points.get_labels() == i)
-                    self.n_clusters += n_clusters - 1
+                    #labels[labels > 0] += self.n_clusters - 1
+                    #self.live_points.set_labels(labels, idx=self.live_points.get_labels() == i)
+                    #self.n_clusters += n_clusters - 1
+                    self.summaries.split(i, labels)
 
 
             if n_clusters != self.n_clusters:
-                print(f'Found {n_clusters} clusters with volume fractions {(self.cluster_volumes/torch.sum(self.cluster_volumes)).detach().numpy()}')
+                print(f'Found {n_clusters} clusters with volume fractions {(torch.exp(self.summaries.get_logXp())).detach().numpy()}')
                 self.n_clusters = n_clusters
 
         def get_cluster_live_points(self, label):
