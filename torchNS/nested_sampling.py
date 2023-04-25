@@ -187,8 +187,8 @@ class NestedSampler:
             label = sample.get_labels().item()
             if label > 0:
                 print('label = ', label)
-            np = self.live_points.count_labels()[label]
-            logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(np, device=self.device))
+            n_p = self.live_points.count_labels()[label]
+            logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p, device=self.device))
             weight = torch.exp(logweight)
             return weight
 
@@ -290,8 +290,7 @@ class NestedSampler:
                 self.n_clusters = n_clusters
 
         def get_cluster_live_points(self, label):
-            np = self.live_points.count_labels()[label]
-            return np
+            return self.live_points.count_labels()[label]
 
         def kill_point(self):
             sample = self.live_points.pop()
@@ -305,14 +304,13 @@ class NestedSampler:
 
             # Update the summaries
             label = sample.get_labels().item()
-            np = self.live_points.count_labels()[label]
-            self.summaries.update(sample.get_logL(), label, np)
+            n_p = self.live_points.count_labels()[label]
+            self.summaries.update(sample.get_logL(), label, n_p)
 
             # Update cluster volumes
             if self.clustering:
                 label = sample.get_labels().item()
-                np = self.live_points.count_labels()[label]
-                self.cluster_volumes[label] = self.cluster_volumes[label] * np / (np + 1)
+                self.cluster_volumes[label] = self.cluster_volumes[label] * n_p / (n_p + 1)
             return sample
 
         def add_point(self, min_logL):
@@ -395,8 +393,16 @@ class NestedSampler:
                 epsilon = torch.exp(delta_logZ - self.logZ)
 
                 if (nsteps % 100 == 0) and self.verbose:
-                    print(nsteps, 'completed, logZ =', self.logZ.item(), ', epsilon =',
-                          epsilon.item())
+                    if self.verbose:
+                        logZ_mean = self.summaries.get_mean_logZ().item()
+                        logZ_std = self.summaries.get_var_logZ().item() ** 0.5
+                        print('---------------------------------------------')
+                        print(f'logZ = {logZ_mean :.4f} +/- {logZ_std :.4f}')
+                        if self.clustering:
+                            cluster_volumes = torch.exp(self.summaries.get_logXp().detach().numpy())
+                            print('---------------------------------------------')
+                            for c in range(self.n_clusters):
+                                print(f'Cluster {c} has {self.n_clusters[c]} points and volume {cluster_volumes[c]}')
                 nsteps += 1
 
                 if self.clustering and nsteps % self.get_nlive() == 0:
