@@ -104,7 +104,8 @@ class GaliNest(NestedSampler):
         """
         # idx = randint(1, self.nlive - 2)
         # x = self.live_points.get_values()[idx]
-        x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
+        cluster_volumes = torch.exp(self.summaries.get_logXp())
+        x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
         num_steps = self.n_repeats
         alpha = 1
         dt = 0.1
