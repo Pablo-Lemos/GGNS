@@ -1,4 +1,5 @@
 import torch
+from random import randint
 
 # Default floating point type
 dtype = torch.float32
@@ -102,6 +103,20 @@ class NSPoints:
         self.values = self.values[indices]
         self.labels = self.labels[indices]
 
+    def pop_by_index(self, idx):
+        sample = NSPoints(self.nparams)
+        sample.add_samples(values=self.values[idx:idx+1],
+                           weights=self.weights[idx:idx+1],
+                           logL=self.logL[idx:idx+1],
+                           labels=self.labels[idx:idx+1])
+
+        self.values = torch.cat([self.values[:idx], self.values[idx+1:]], dim=0)
+        self.weights = torch.cat([self.weights[:idx], self.weights[idx+1:]], dim=0)
+        self.logL = torch.cat([self.logL[:idx], self.logL[idx+1:]], dim=0)
+        self.labels = torch.cat([self.labels[:idx], self.labels[idx+1:]], dim=0)
+        self.currSize -= 1
+        return sample
+
     def pop(self):
         self._sort()
         sample = NSPoints(self.nparams)
@@ -114,8 +129,60 @@ class NSPoints:
         self.currSize -= 1
         return sample
 
-    def set_labels(self, labels):
-        self.labels = torch.as_tensor(labels, device=self.values.device, dtype=torch.int64)
+    def count_labels(self):
+        return torch.bincount(self.labels)
+
+    def label_subset(self, label):
+        idx = self.labels == label
+        sample = NSPoints(self.nparams)
+        sample.add_samples(values=self.values[idx],
+                           weights=self.weights[idx],
+                           logL=self.logL[idx],
+                           labels=self.labels[idx])
+        return sample
+
+    def get_random_sample(self, volumes):
+        sample = NSPoints(self.nparams)
+
+        if torch.max(self.labels) == 0:
+            idx = randint(0, self.currSize-1)
+
+            sample.add_samples(values=self.values[idx:idx+1],
+                               weights=self.weights[idx:idx+1],
+                               logL=self.logL[idx:idx+1],
+                               labels=self.labels[idx:idx+1])
+
+        else:
+            label = torch.multinomial(volumes / torch.sum(volumes), 1)
+            subset = self.label_subset(label)
+            while subset.get_size() < 1:
+                label = torch.multinomial(volumes / torch.sum(volumes), 1)
+                subset = self.label_subset(label)
+
+            idx = randint(0, subset.currSize-1)
+
+            sample.add_samples(values=subset.values[idx:idx+1],
+                               weights=subset.weights[idx:idx+1],
+                               logL=subset.logL[idx:idx+1],
+                               labels=subset.labels[idx:idx+1])
+        return sample
+
+    def set_labels(self, labels, idx=None):
+        if idx is None:
+            self.labels = torch.as_tensor(labels, device=self.values.device, dtype=torch.int64)
+        else:
+            assert len(labels) == len(idx), "Labels and indices must have the same length"
+            self.labels[idx] = torch.as_tensor(labels, device=self.values.device, dtype=torch.int64)
+
+    def get_cluster(self, label):
+        idx = self.labels == label
+        sample = NSPoints(self.nparams)
+        sample.add_samples(values=self.values[idx],
+                           weights=self.weights[idx],
+                           logL=self.logL[idx],
+                           labels=self.labels[idx])
+        sample.currSize = self.logL[idx].shape[0]
+        return sample
 
     def get_logL(self):
         self._sort()

@@ -7,8 +7,8 @@ dtype = torch.float32
 
 class MultiNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, max_nsteps=10000, verbose=True,
-                 eff=0.1):
-        super().__init__(loglike, params, nlive, tol, max_nsteps, verbose)
+                 eff=0.1, clustering=False, device=None):
+        super().__init__(loglike, params, nlive, tol, max_nsteps, verbose=verbose, clustering=clustering, device=device)
         self.eff = eff
 
     def fit_normal(self):
@@ -17,7 +17,7 @@ class MultiNest(NestedSampler):
         cov = (1/self.eff)*torch.cov(x.T)
         assert torch.linalg.det(cov) > 0, "Covariance not positive semidefinite"
         mvn = torch.distributions.MultivariateNormal(mean,
-                                                     scale_tril=torch.linalg.cholesky(cov))
+                                                     scale_tril=torch.linalg.cholesky(cov).to(self.device))
         return mvn
 
     def find_new_sample(self, min_like):
@@ -42,8 +42,8 @@ class MultiNest(NestedSampler):
 
         sample = NSPoints(self.nparams)
         sample.add_samples(values=values.reshape(1, -1),
-                           logL=torch.tensor([newlike], dtype = dtype),
-                           weights=torch.ones(1))
+                           logL=newlike.reshape(1), #torch.tensor([newlike], dtype = dtype),
+                           weights=torch.ones(1, device=self.device))
 
         return sample
 

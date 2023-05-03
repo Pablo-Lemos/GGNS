@@ -7,7 +7,6 @@ from numpy import clip
 # Default floating point type
 dtype = torch.float32
 
-
 class GaliNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
@@ -76,20 +75,6 @@ class GaliNest(NestedSampler):
 
         return position, p_x
 
-    def get_score(self, theta):
-        self.like_evals += 1
-        theta = theta.clone().detach().requires_grad_(True)
-        loglike = self.loglike(theta)
-
-        if self.given_score:
-            score = self.score(theta)
-        else:
-            loglike.backward()
-            score = theta.grad
-        if torch.isnan(score).any():
-            raise ValueError("Score is NaN for theta = {}".format(theta))
-        return loglike, score
-
     def reflect_sampling(self, min_loglike):
         """
         Slice sampling algorithm for PyTorch.
@@ -103,10 +88,9 @@ class GaliNest(NestedSampler):
         Returns:
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
-
+        cluster_volumes = torch.exp(self.summaries.get_logXp())
+        x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
         num_steps = self.n_repeats
-        idx = randint(1, self.nlive - 2)
-        x = self.live_points.get_values()[idx]
         alpha = 1
         dt = 0.1
 
@@ -125,9 +109,7 @@ class GaliNest(NestedSampler):
 
             if not accepted:
                 num_fails += 1
-                idx = randint(1, self.nlive - 2)
-                x = self.live_points.get_values()[idx]
-                #dt = dt*0.9
+                x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
 
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
 
@@ -153,7 +135,6 @@ class GaliNest(NestedSampler):
         '''
         newlike = -torch.inf
         while newlike < min_like:
-            #if self.n_accepted < 5*self.nlive:
             if self.acc_rate_pure_ns > 0.1:
                 newsample = self.sample_prior(npoints=1)
                 pure_ns = True
@@ -185,7 +166,6 @@ if __name__ == "__main__":
                                                      0.2*torch.ones(ndims)))
 
     true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
-    #print(true_samples.shape)
 
     def get_loglike(theta):
         lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
