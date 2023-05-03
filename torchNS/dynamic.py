@@ -8,6 +8,9 @@ dtype = torch.float64
 class DynamicNestedSampler(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, max_nsteps=10000, verbose=True,
                  clustering=False, device=None):
+        """ In this Nested Sampler, we start with a set of live points, and instead of killing one at a time, we
+        kill half of them and replace them with new samples from the prior. This is done until the tolerance is reached.
+        """
         super().__init__(loglike, params, nlive, tol, max_nsteps, verbose=verbose, clustering=clustering, device=device)
 
     def move_one_step(self):
@@ -28,11 +31,11 @@ class DynamicNestedSampler(NestedSampler):
             values = self.live_points.get_values()
 
             #TODO: Check if this is working for a batch
-            dist = torch.sum((values - newsample.get_values()) ** 2, dim=1)
-            idx = torch.argmin(dist)
+            dist = torch.sum((values.reshape(-1, 1, self.nparams) - newsample.get_values().reshape(1, -1, self.nparams)) ** 2, dim=-1)
+            idx = torch.argmin(dist, dim=0)
 
             # Assign its label to the new point
-            newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
+            newsample.set_labels(self.live_points.get_labels()[idx])
         self.live_points.add_nspoint(newsample)
 
     def find_new_sample_batch(self, min_like, n_points):
@@ -77,7 +80,7 @@ if __name__ == "__main__":
         )
 
     ns = DynamicNestedSampler(
-        nlive=25*ndims,
+        nlive=25*ndims+1,
         loglike=get_loglike,
         params=params,
         clustering=True,
