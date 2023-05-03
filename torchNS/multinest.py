@@ -3,7 +3,7 @@ from torchNS.nested_sampling import NestedSampler
 from torchNS.param import Param, NSPoints
 
 # Default floating point type
-dtype = torch.float32
+dtype = torch.float64
 
 class MultiNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, max_nsteps=10000, verbose=True,

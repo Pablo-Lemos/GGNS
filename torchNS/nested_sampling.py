@@ -350,7 +350,7 @@ class NestedSampler:
         def move_one_step(self):
             ''' Find highest log like, get rid of that point, and sample a new one '''
             sample = self.kill_point()
-            self.add_point(sample.get_logL())
+            self.add_point(min_logL=sample.get_logL())
 
         def _collect_priors(self):
             """
@@ -425,15 +425,8 @@ class NestedSampler:
             #while (self.n_clusters > 0 and self.get_nlive() > 2):
             while (self.n_clusters > 0 and max_epsilon > self.tol):
                 self.move_one_step()
-                # delta_logZ = self.get_delta_logZ()
-                # epsilon = torch.exp(delta_logZ - self.logZ)
                 epsilon = self._get_epsilon()
                 max_epsilon = torch.max(epsilon) if self.clustering else epsilon
-                #if self.clustering and (torch.min(epsilon) < self.tol):
-                    #clusters_to_kill = torch.where(epsilon < self.tol)[0]
-                    #print(f'Killing clusters {clusters_to_kill}')
-                    #for c in reversed(clusters_to_kill):
-                    #    self._kill_cluster(c)
 
                 if (nsteps % self.nlive_ini == 0) and self.verbose:
                     if self.clustering:
