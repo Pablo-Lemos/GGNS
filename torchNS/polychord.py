@@ -24,20 +24,6 @@ class Polychord(NestedSampler):
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
         #assert p.prior_type == "uniform" for p in self.params, "Prior must be uniform for now"
 
-    def get_score(self, theta):
-        self.like_evals += 1
-        theta = theta.clone().detach().requires_grad_(True)
-        loglike = self.loglike(theta)
-
-        if self.given_score:
-            score = self.score(theta)
-        else:
-            loglike.backward()
-            score = theta.grad
-        if torch.isnan(score).any():
-            raise ValueError("Score is NaN for theta = {}".format(theta))
-        return loglike, score
-
     def slice_sampling(self, log_slice_height, initial_x, step_size=1):
         """
         Slice sampling algorithm for PyTorch.

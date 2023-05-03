@@ -144,6 +144,20 @@ class NestedSampler:
             self.like_evals += npoints
             return points
 
+        def get_score(self, theta):
+            self.like_evals += 1
+            theta = theta.clone().detach().requires_grad_(True)
+            loglike = self.loglike(theta)
+
+            if self.given_score:
+                score = self.score(theta)
+            else:
+                loglike.backward()
+                score = theta.grad
+            if torch.isnan(score).any():
+                raise ValueError("Score is NaN for theta = {}".format(theta))
+            return loglike, score
+
         def get_like_evals(self):
             return self.like_evals
 
