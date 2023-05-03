@@ -112,7 +112,7 @@ class NestedSamplingSummaries:
                 self.logXpXq[label, l] = self.logXpXq[label, l] + torch.log(
                     torch.as_tensor(np / (np + 1.), device=self.device))
 
-                #self.logXpXq[l, label] = self.logXpXq[label, l]
+                self.logXpXq[l, label] = self.logXpXq[label, l].clone()
 
 
     def split(self, cluster, labels):
@@ -161,8 +161,10 @@ class NestedSamplingSummaries:
                 elif l in new_idx:
                     j = new_idx.index(l)
                     new_logXpXq[idx, l] = self.logXpXq[cluster, cluster] + torch.log(torch.as_tensor(ni * float(ns[j]) / n / (n + 1.), device=self.device))
+                    new_logXpXq[l, idx] = new_logXpXq[idx, l].clone()
                 else:
                     new_logXpXq[idx, l] = self.logXpXq[cluster, l] + torch.log(torch.as_tensor(ni / n, device=self.device))
+                    new_logXpXq[l, idx] = new_logXpXq[idx, l].clone()
 
         self.n_clusters += num_new_clusters
         # if not torch.allclose(torch.logsumexp(new_logZp, 0), self.logZ):
