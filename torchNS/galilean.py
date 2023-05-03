@@ -88,8 +88,6 @@ class GaliNest(NestedSampler):
         Returns:
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
-        # idx = randint(1, self.nlive - 2)
-        # x = self.live_points.get_values()[idx]
         cluster_volumes = torch.exp(self.summaries.get_logXp())
         x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
         num_steps = self.n_repeats

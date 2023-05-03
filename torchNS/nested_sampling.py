@@ -406,8 +406,7 @@ class NestedSampler:
                 print('Run time =', run_time, 'seconds')
                 print('Acceptance rate =', acc_rate)
                 print('Number of likelihood evaluations =', self.like_evals)
-                print('logZ =', self.summaries.get_mean_logZ().item(), '+/-',
-                      self.summaries.get_var_logZ().item()**0.5)
+                print(f'logZ = {self.summaries.get_mean_logZ().item() :.4f} +/- {self.summaries.get_var_logZ().item()**0.5 :.4f}')
                 print('---------------------------------------------')
 
 

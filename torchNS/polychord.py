@@ -88,8 +88,8 @@ class Polychord(NestedSampler):
 
 
     def grad_desc(self, min_like):
-        idx = randint(0, self.nlive_ini-2)
-        curr_value = self.live_points.get_values()[idx]
+        cluster_volumes = torch.exp(self.summaries.get_logXp())
+        curr_value = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
 
         for i in range(self.n_repeats):
             new_value, new_loglike = self.slice_sampling(min_like, curr_value)
@@ -126,7 +126,7 @@ class Polychord(NestedSampler):
 
 if __name__ == "__main__":
     import time
-    ndims = 10
+    ndims = 5
     mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -156,7 +156,8 @@ if __name__ == "__main__":
     ns = Polychord(
         nlive=25*len(params),
         loglike=get_loglike,
-        params=params)
+        params=params,
+        clustering=True)
 
     start_time = time.time()
     ns.run()
