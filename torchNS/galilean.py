@@ -51,27 +51,30 @@ class GaliNest(NestedSampler):
         Returns:
             position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
         """
-
+        assert(len(position.shape) == 2), "Position must be a 2D tensor"
         for step in range(num_steps):
-            reflected = False
+            # reflected = False
             position += velocity * dt
-            #theta = position.clone().detach().requires_grad_(True)
             p_x, grad_p_x = self.get_score(position)
 
-            if p_x <= min_like:
-                if reflected:
-                    raise ValueError("Particle got stuck at the boundary")
-                # Reflect velocity using the normal vector of the wall
-                normal = grad_p_x / torch.norm(grad_p_x)
-                velocity -= 2 * torch.dot(velocity, normal) * normal
-                reflected = True
-                self.n_out_steps += 1
-            else:
-                reflected = False
-                self.n_in_steps += 1
+            reflected = p_x <= min_like
+            normal = grad_p_x / torch.norm(grad_p_x)
+            delta_velocity = 2 * torch.tensordot(velocity, normal, dims=([1], [1])) * normal
+            velocity[reflected, :] -= delta_velocity[reflected, :]
+            self.n_out_steps += reflected.sum()
+            self.n_in_steps += (~reflected).sum()
 
-                # Move position slightly inside the walls to avoid getting stuck at the boundary
-                # position -= normal * (p_x - min_like)
+            # if p_x <= min_like:
+            #     # if reflected:
+            #     #     raise ValueError("Particle got stuck at the boundary")
+            #     # Reflect velocity using the normal vector of the wall
+            #     normal = grad_p_x / torch.norm(grad_p_x)
+            #     velocity -= 2 * torch.dot(velocity, normal) * normal
+            #     # reflected = True
+            #     self.n_out_steps += 1
+            # else:
+            #     # reflected = False
+            #     self.n_in_steps += 1
 
         return position, p_x
 
@@ -89,7 +92,7 @@ class GaliNest(NestedSampler):
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
         cluster_volumes = torch.exp(self.summaries.get_logXp())
-        x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
+        x = self.live_points.get_random_sample(cluster_volumes).get_values()
         num_steps = self.n_repeats
         alpha = 1
         dt = 0.1
@@ -97,7 +100,7 @@ class GaliNest(NestedSampler):
         accepted = False
         num_fails = 0
         while not accepted:
-            velocity = alpha * torch.randn(self.nparams, device=self.device)
+            velocity = alpha * torch.randn_like(x, device=self.device)
             new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
             accepted = new_loglike > min_loglike[0]
 
@@ -109,7 +112,7 @@ class GaliNest(NestedSampler):
 
             if not accepted:
                 num_fails += 1
-                x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
+                x = self.live_points.get_random_sample(self.cluster_volumes).get_values()
 
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
 
@@ -135,7 +138,7 @@ class GaliNest(NestedSampler):
         '''
         newlike = -torch.inf
         while newlike < min_like:
-            if self.acc_rate_pure_ns > 0.1:
+            if self.acc_rate_pure_ns > 1.1:
                 newsample = self.sample_prior(npoints=1)
                 pure_ns = True
             else:
@@ -168,7 +171,7 @@ if __name__ == "__main__":
     true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
+        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
         return lp
 
     params = []

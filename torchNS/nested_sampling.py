@@ -152,8 +152,9 @@ class NestedSampler:
             if self.given_score:
                 score = self.score(theta)
             else:
-                loglike.backward()
-                score = theta.grad
+                #loglike.backward()
+                #score = theta.grad
+                score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike))[0]
             if torch.isnan(score).any():
                 raise ValueError("Score is NaN for theta = {}".format(theta))
             return loglike, score

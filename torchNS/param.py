@@ -1,5 +1,5 @@
 import torch
-from random import randint
+from numpy.random import randint
 
 # Default floating point type
 dtype = torch.float32
@@ -141,30 +141,34 @@ class NSPoints:
                            labels=self.labels[idx])
         return sample
 
-    def get_random_sample(self, volumes):
+    def get_random_sample(self, volumes, n_samples=1):
         sample = NSPoints(self.nparams)
 
         if torch.max(self.labels) == 0:
-            idx = randint(0, self.currSize-1)
+            idx = randint(0, self.currSize-1, size=(n_samples,))
 
-            sample.add_samples(values=self.values[idx:idx+1],
-                               weights=self.weights[idx:idx+1],
-                               logL=self.logL[idx:idx+1],
-                               labels=self.labels[idx:idx+1])
+            sample.add_samples(values=self.values[idx],
+                               weights=self.weights[idx],
+                               logL=self.logL[idx],
+                               labels=self.labels[idx])
 
         else:
-            label = torch.multinomial(volumes / torch.sum(volumes), 1)
-            subset = self.label_subset(label)
-            while subset.get_size() < 1:
-                label = torch.multinomial(volumes / torch.sum(volumes), 1)
+            labels = torch.multinomial(volumes / torch.sum(volumes), n_samples, replacement=True)
+            #subset = self.label_subset(label)
+            # while subset.get_size() < 1:
+            #     label = torch.multinomial(volumes / torch.sum(volumes), n_samples, replacement=True)
+            #     subset = self.label_subset(label)
+
+            # Calculate the number of samples to take from each label
+            n_samples_per_label = torch.bincount(labels, minlength=torch.max(labels)+1)
+            for label, n_samples in enumerate(n_samples_per_label):
                 subset = self.label_subset(label)
+                idx = randint(0, subset.currSize-1, size=(n_samples,))
 
-            idx = randint(0, subset.currSize-1)
-
-            sample.add_samples(values=subset.values[idx:idx+1],
-                               weights=subset.weights[idx:idx+1],
-                               logL=subset.logL[idx:idx+1],
-                               labels=subset.labels[idx:idx+1])
+                sample.add_samples(values=subset.values[idx],
+                                   weights=subset.weights[idx],
+                                   logL=subset.logL[idx],
+                                   labels=subset.labels[idx])
         return sample
 
     def set_labels(self, labels, idx=None):
