@@ -30,12 +30,13 @@ class DynamicNestedSampler(NestedSampler):
             # Find closest point to new sample
             values = self.live_points.get_values()
 
-            #TODO: Check if this is working for a batch
             dist = torch.sum((values.reshape(-1, 1, self.nparams) - newsample.get_values().reshape(1, -1, self.nparams)) ** 2, dim=-1)
             idx = torch.argmin(dist, dim=0)
 
             # Assign its label to the new point
             newsample.set_labels(self.live_points.get_labels()[idx])
+
+        self.n_accepted += n_points
         self.live_points.add_nspoint(newsample)
 
     def find_new_sample_batch(self, min_like, n_points):
@@ -83,7 +84,7 @@ if __name__ == "__main__":
         nlive=25*ndims+1,
         loglike=get_loglike,
         params=params,
-        clustering=True,
+        clustering=False,
         verbose=True,)
 
     ns.run()

@@ -144,7 +144,8 @@ class NSPoints:
     def get_random_sample(self, volumes, n_samples=1):
         sample = NSPoints(self.nparams)
 
-        if torch.max(self.labels) == 0:
+        # If all points have the same label
+        if torch.unique(self.labels).shape[0] == 1:
             idx = randint(0, self.currSize-1, size=(n_samples,))
 
             sample.add_samples(values=self.values[idx],
@@ -153,22 +154,26 @@ class NSPoints:
                                labels=self.labels[idx])
 
         else:
-            labels = torch.multinomial(volumes / torch.sum(volumes), n_samples, replacement=True)
+            labels = torch.multinomial(volumes / torch.sum(volumes), num_samples=n_samples, replacement=True)
             #subset = self.label_subset(label)
             # while subset.get_size() < 1:
             #     label = torch.multinomial(volumes / torch.sum(volumes), n_samples, replacement=True)
             #     subset = self.label_subset(label)
 
             # Calculate the number of samples to take from each label
-            n_samples_per_label = torch.bincount(labels, minlength=torch.max(labels)+1)
+            n_samples_per_label = torch.bincount(labels)#, minlength=torch.max(labels)+1)
             for label, n_samples in enumerate(n_samples_per_label):
-                subset = self.label_subset(label)
-                idx = randint(0, subset.currSize-1, size=(n_samples,))
+                if n_samples > 0:
+                    subset = self.label_subset(label)
+                    if subset.get_size() <= 1:
+                        idx = [0]*n_samples
+                    else:
+                        idx = randint(0, subset.currSize-1, size=(n_samples,))
 
-                sample.add_samples(values=subset.values[idx],
-                                   weights=subset.weights[idx],
-                                   logL=subset.logL[idx],
-                                   labels=subset.labels[idx])
+                    sample.add_samples(values=subset.values[idx],
+                                       weights=subset.weights[idx],
+                                       logL=subset.logL[idx],
+                                       labels=subset.labels[idx])
         return sample
 
     def set_labels(self, labels, idx=None):

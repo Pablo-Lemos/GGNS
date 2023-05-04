@@ -93,6 +93,7 @@ class NestedSampler:
             self.n_clusters = 1
             self.summaries = NestedSamplingSummaries(device=self.device)
             self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
+            self.n_accepted = 0
 
         def sample_prior(self, npoints, initial_step=False):
             ''' Produce samples from the prior distributions
@@ -145,7 +146,12 @@ class NestedSampler:
             return points
 
         def get_score(self, theta):
-            self.like_evals += 1
+            if theta.dim() == 1:
+                self.like_evals += 1
+            elif theta.dim() == 2:
+                self.like_evals += theta.shape[0]
+            else:
+                raise ValueError("theta must be 1 or 2 dimensional")
             theta = theta.clone().detach().requires_grad_(True)
             loglike = self.loglike(theta)
 
@@ -346,6 +352,7 @@ class NestedSampler:
                 # Assign its label to the new point
                 newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
             self.live_points.add_nspoint(newsample)
+            self.n_accepted += 1
 
         def move_one_step(self):
             ''' Find highest log like, get rid of that point, and sample a new one '''
@@ -422,13 +429,13 @@ class NestedSampler:
             # Run the algorithm
             max_epsilon = 1e1000
             nsteps = 0
-            #while (self.n_clusters > 0 and self.get_nlive() > 2):
             while (self.n_clusters > 0 and max_epsilon > self.tol):
                 self.move_one_step()
                 epsilon = self._get_epsilon()
                 max_epsilon = torch.max(epsilon) if self.clustering else epsilon
 
-                if (nsteps % self.nlive_ini == 0) and self.verbose:
+                if (self.n_accepted % self.nlive_ini == 0) and self.verbose:
+                #if self.verbose:
                     if self.clustering:
                         self.find_clusters()
 
