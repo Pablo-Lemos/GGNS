@@ -49,18 +49,17 @@ class GaliNest(NestedSampler):
             position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
         """
         assert(len(position.shape) == 2), "Position must be a 2D tensor"
-        num_reflections = torch.zeros(position.shape[0], dtype=torch.int32, device=self.device)
         for step in range(num_steps):
             # reflected = False
             position += velocity * dt
             # Slightly perturb the position to decorrelate the samples
-            position *= (1 + 1e-2 * torch.randn_like(position))
+            # position *= (1 + 1e-2 * torch.randn_like(position))
             p_x, grad_p_x = self.get_score(position)
 
             reflected = p_x <= min_like
-            num_reflections += reflected
-            normal = grad_p_x / torch.norm(grad_p_x)
-            delta_velocity = 2 * torch.tensordot(velocity, normal, dims=([1], [1])) * normal
+            #num_reflections += reflected
+            normal = grad_p_x / torch.norm(grad_p_x, dim=-1)
+            delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
             velocity[reflected, :] -= delta_velocity[reflected, :]
             self.n_out_steps += reflected.sum()
             self.n_in_steps += (~reflected).sum()
@@ -127,7 +126,8 @@ class GaliNest(NestedSampler):
         while not accepted:
             r = torch.randn_like(x)
             velocity = alpha * r #/ torch.norm(r, dim=-1, keepdim=True)
-            new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
+            new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike,
+                                                               dt=dt, num_steps=num_steps)
             accepted = new_loglike > min_loglike[0]
 
             #acceptance = self.n_in_steps / (self.n_out_steps + self.n_in_steps)
@@ -144,7 +144,7 @@ class GaliNest(NestedSampler):
                 label = point.get_labels()
 
                 # Use the formula for the radius in terms of volume and dimension
-                alpha = (cluster_volumes[label] * gamma / pi ** (self.nparams / 2)) ** (1 / self.nparams)
+                # alpha = (cluster_volumes[label] * gamma / pi ** (self.nparams / 2)) ** (1 / self.nparams)
 
                 # subset = self.live_points.label_subset(label)
                 # if subset.get_size() == 1:
@@ -232,7 +232,7 @@ if __name__ == "__main__":
         nlive=25*len(params),
         loglike=get_loglike,
         params=params,
-        clustering=False,
+        clustering=True,
         tol=1e-1
     )
 
@@ -243,9 +243,9 @@ if __name__ == "__main__":
     print('True logZ = ', np.log(1 / 10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
-    # from getdist import plots, MCSamples
-    # samples = ns.convert_to_getdist()
-    # true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
-    # g = plots.get_subplot_plotter()
-    # g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    # g.export('test_galilean.png')
+    from getdist import plots, MCSamples
+    samples = ns.convert_to_getdist()
+    true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
+    g = plots.get_subplot_plotter()
+    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
+    g.export('test_galilean.png')

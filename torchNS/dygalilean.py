@@ -21,7 +21,7 @@ class DyGaliNest(DynamicNestedSampler):
 
         self.acceptance_rate = 1.0
         self.n_tries = 0
-        self.n_repeats = int(5 * self.nparams)
+        self.n_repeats = int(2*self.nparams)
 
         self.dt = dt_ini
         self.n_in_steps = 0
@@ -63,7 +63,7 @@ class DyGaliNest(DynamicNestedSampler):
             # reflected = False
             position += velocity * dt
             # Slightly perturb the position to decorrelate the samples
-            position *= (1 + 1e-2 * torch.randn_like(position))
+            #position *= (1 + 1e-2 * torch.randn_like(position))
             p_x, grad_p_x = self.get_score(position)
 
             reflected = p_x <= min_like
@@ -185,7 +185,7 @@ class DyGaliNest(DynamicNestedSampler):
                 # Assign its label to the new point
                 newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
 
-            self.n_accepted += 1
+            #self.n_accepted += 1
             self.n_accepted_pure_ns += 1
             self.acc_rate_pure_ns = self.n_accepted_pure_ns / self.n_tries_pure_ns
             self.live_points.add_nspoint(newsample)
@@ -225,7 +225,7 @@ if __name__ == "__main__":
         )
 
     ns = DyGaliNest(
-        nlive=25*len(params),
+        nlive=100*len(params),
         loglike=get_loglike,
         params=params,
         verbose=True,
