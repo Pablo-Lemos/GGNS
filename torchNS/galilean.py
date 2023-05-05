@@ -8,7 +8,7 @@ from numpy import clip
 dtype = torch.float32
 
 class GaliNest(NestedSampler):
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
 
         self.acceptance_rate = 1.0
@@ -35,7 +35,7 @@ class GaliNest(NestedSampler):
         #assert p.prior_type == "uniform" for p in self.params, "Prior must be uniform for now"
 
     #@torch.compile
-    def simulate_particle_in_box(self, position, velocity, min_like, dt, num_steps):
+    def simulate_particle_in_box(self, position, velocity, min_like, dt, min_reflections):
         """
         Simulate the motion of a particle in a box with walls defined by the function p(X) = p0,
         where X is a three-vector (x, y, z), using PyTorch.
@@ -51,29 +51,33 @@ class GaliNest(NestedSampler):
         Returns:
             position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
         """
+        n_out_steps = 0
+        n_in_steps = 0
 
-        for step in range(num_steps):
-            reflected = False
+        reflections = 0
+        positions = torch.tensor([], device=self.device)
+        loglikes = torch.tensor([], device=self.device)
+        while reflections < min_reflections + 1:
             position += velocity * dt
-            #theta = position.clone().detach().requires_grad_(True)
             p_x, grad_p_x = self.get_score(position)
+            if (reflections >= min_reflections) and (p_x > min_like):
+                positions = torch.cat((positions, position.unsqueeze(0)), dim=0)
+                loglikes = torch.cat((loglikes, p_x.unsqueeze(0)), dim=0)
 
             if p_x <= min_like:
-                if reflected:
-                    raise ValueError("Particle got stuck at the boundary")
                 # Reflect velocity using the normal vector of the wall
                 normal = grad_p_x / torch.norm(grad_p_x)
                 velocity -= 2 * torch.dot(velocity, normal) * normal
-                reflected = True
-                self.n_out_steps += 1
+                reflections += 1
+                n_out_steps += 1
             else:
-                reflected = False
-                self.n_in_steps += 1
+                n_in_steps += 1
 
                 # Move position slightly inside the walls to avoid getting stuck at the boundary
                 # position -= normal * (p_x - min_like)
+        acceptance = n_out_steps / (n_out_steps + n_in_steps)
+        return positions, loglikes, acceptance
 
-        return position, p_x
 
     def reflect_sampling(self, min_loglike):
         """
@@ -89,27 +93,45 @@ class GaliNest(NestedSampler):
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
         cluster_volumes = torch.exp(self.summaries.get_logXp())
-        x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
-        num_steps = self.n_repeats
+        point = self.live_points.get_random_sample(cluster_volumes)
+        x = point.get_values()[0]
+        # label = point.get_labels()
+        # cluster = self.live_points.get_cluster(label)
+        # cov = torch.cov(cluster.get_values().T)
+        # L = torch.linalg.cholesky(cov)
         alpha = 1
-        dt = 0.1
 
         accepted = False
         num_fails = 0
         while not accepted:
+            #velocity = torch.randn(self.nparams, device=self.device)
+            #velocity = velocity / torch.norm(velocity)
+            #velocity2 = torch.matmul(L, velocity)
             velocity = alpha * torch.randn(self.nparams, device=self.device)
-            new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
-            accepted = new_loglike > min_loglike[0]
+            #new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
+            positions, loglikes, acceptance = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=self.dt, min_reflections=10)
+            if len(positions) > 0:
+                idx = randint(0, len(positions) - 1)
+                new_x = positions[idx]
+                new_loglike = loglikes[idx]
+                accepted = True #new_loglike > min_loglike[0]
 
-            acceptance = self.n_in_steps / (self.n_out_steps + self.n_in_steps)
-            if acceptance > 0.5:
+            if acceptance < 0.02:
                 self.dt = clip(1.1 * self.dt, 1e-5, 10.)
-            elif acceptance < 0.2:
+                #print("Increasing dt to {}".format(self.dt))
+            elif acceptance > 0.1:
                 self.dt = clip(0.9 * self.dt, 1e-5, 10.)
+                #print("Decreasing dt to {}".format(self.dt))
 
             if not accepted:
-                num_fails += 1
-                x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
+                #raise ValueError("Could not find a new sample")
+
+                point = self.live_points.get_random_sample(cluster_volumes)
+                x = point.get_values()[0]
+                # label = point.get_labels()
+                # cluster = self.live_points.get_cluster(label)
+                # cov = torch.cov(cluster.get_values().T)
+                # L = torch.linalg.cholesky(cov)
 
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
 
@@ -135,7 +157,7 @@ class GaliNest(NestedSampler):
         '''
         newlike = -torch.inf
         while newlike < min_like:
-            if self.acc_rate_pure_ns > 0.1:
+            if self.acc_rate_pure_ns > 1.1:
                 newsample = self.sample_prior(npoints=1)
                 pure_ns = True
             else:

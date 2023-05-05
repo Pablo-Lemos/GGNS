@@ -132,15 +132,6 @@ class NSPoints:
     def count_labels(self):
         return torch.bincount(self.labels)
 
-    def label_subset(self, label):
-        idx = self.labels == label
-        sample = NSPoints(self.nparams)
-        sample.add_samples(values=self.values[idx],
-                           weights=self.weights[idx],
-                           logL=self.logL[idx],
-                           labels=self.labels[idx])
-        return sample
-
     def get_random_sample(self, volumes):
         sample = NSPoints(self.nparams)
 
@@ -154,10 +145,10 @@ class NSPoints:
 
         else:
             label = torch.multinomial(volumes / torch.sum(volumes), 1)
-            subset = self.label_subset(label)
+            subset = self.get_cluster(label)
             while subset.get_size() < 1:
                 label = torch.multinomial(volumes / torch.sum(volumes), 1)
-                subset = self.label_subset(label)
+                subset = self.get_cluster(label)
 
             idx = randint(0, subset.currSize-1)
 
