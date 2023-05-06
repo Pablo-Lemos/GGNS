@@ -202,7 +202,7 @@ class GaliNest(NestedSampler):
 
 
 if __name__ == "__main__":
-    ndims = 20
+    ndims = 32
     mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -211,10 +211,12 @@ if __name__ == "__main__":
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
-    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    true_samples = mvn1.sample((5000,))
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
+        #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
+        lp = mvn1.log_prob(theta)
         return lp
 
     params = []
@@ -243,9 +245,9 @@ if __name__ == "__main__":
     print('True logZ = ', np.log(1 / 10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
-    from getdist import plots, MCSamples
-    samples = ns.convert_to_getdist()
-    true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
-    g = plots.get_subplot_plotter()
-    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    g.export('test_galilean.png')
+    # from getdist import plots, MCSamples
+    # samples = ns.convert_to_getdist()
+    # true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
+    # g = plots.get_subplot_plotter()
+    # g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
+    # g.export('test_galilean.png')

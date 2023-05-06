@@ -432,7 +432,7 @@ class NestedSampler:
             while (self.n_clusters > 0 and max_epsilon > self.tol):
                 self.move_one_step()
                 epsilon = self._get_epsilon()
-                max_epsilon = torch.max(epsilon) if self.clustering else epsilon
+                max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
 
                 if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
                 #if self.verbose:
