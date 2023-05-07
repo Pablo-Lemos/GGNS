@@ -13,3 +13,4 @@ from .multinest import MultiNest
 from .polychord import Polychord
 #from .reflectnest import ReflectNest
 from .galilean import GaliNest
+from .dygalilean import DyGaliNest

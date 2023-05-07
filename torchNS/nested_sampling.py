@@ -434,7 +434,8 @@ class NestedSampler:
                     #for c in reversed(clusters_to_kill):
                     #    self._kill_cluster(c)
 
-                if (nsteps % self.nlive_ini == 0) and self.verbose:
+                #if (nsteps % self.nlive_ini == 0) and self.verbose:
+                if self.verbose:
                     if self.clustering:
                         self.find_clusters()
 

@@ -7,14 +7,14 @@ from numpy import clip
 # Default floating point type
 dtype = torch.float32
 
-class GaliNest(NestedSampler):
+class DyGaliNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
 
         self.acceptance_rate = 1.0
         self.n_tries = 0
         self.n_accepted = 0
-        self.n_repeats = int(10 * self.nparams)
+        self.n_repeats = 20 #int(2 * self.nparams)
 
         self.dt = dt_ini
         self.n_in_steps = 0
@@ -52,6 +52,7 @@ class GaliNest(NestedSampler):
             position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
         """
 
+        num_reflections = 0
         for step in range(num_steps):
             reflected = False
             position += velocity * dt
@@ -64,16 +65,18 @@ class GaliNest(NestedSampler):
                 # Reflect velocity using the normal vector of the wall
                 normal = grad_p_x / torch.norm(grad_p_x)
                 velocity -= 2 * torch.dot(velocity, normal) * normal
+                num_reflections += 1
                 reflected = True
                 self.n_out_steps += 1
             else:
                 reflected = False
                 self.n_in_steps += 1
+                #velocity *= (1 + torch.randn_like(velocity) * 0.1)
 
                 # Move position slightly inside the walls to avoid getting stuck at the boundary
                 # position -= normal * (p_x - min_like)
 
-        return position, p_x
+        return position, p_x, num_reflections
 
     def reflect_sampling(self, min_loglike):
         """
@@ -89,27 +92,43 @@ class GaliNest(NestedSampler):
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
         cluster_volumes = torch.exp(self.summaries.get_logXp())
-        x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
+        # x = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
         num_steps = self.n_repeats
         alpha = 1
         dt = 0.1
 
+        point = self.live_points.get_random_sample(cluster_volumes)
+        x = point.get_values()[0]
+        # labels = point.get_labels()
+
+        A = torch.cov(self.live_points.get_values().T)
+        L = torch.linalg.cholesky(A)
+
         accepted = False
         num_fails = 0
         while not accepted:
-            velocity = alpha * torch.randn(self.nparams, device=self.device)
-            new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
-            accepted = new_loglike > min_loglike[0]
+            r = torch.randn_like(x)
+            r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            #velocity = r @ L.T
+            velocity = r * torch.diag(L).sqrt()
+            #velocity = alpha * torch.randn(self.nparams, device=self.device)
+            new_x, new_loglike, num_reflections = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=self.dt, num_steps=num_steps)
 
             acceptance = self.n_in_steps / (self.n_out_steps + self.n_in_steps)
-            if acceptance > 0.5:
-                self.dt = clip(1.1 * self.dt, 1e-5, 10.)
-            elif acceptance < 0.2:
+            #if acceptance > 0.5:
+            if num_reflections > 4:
                 self.dt = clip(0.9 * self.dt, 1e-5, 10.)
+            #elif acceptance < 0.2:
+            elif num_reflections < 1:
+                self.dt = clip(1.1 * self.dt, 1e-5, 10.)
+            else:
+                accepted = new_loglike > min_loglike[0]
 
             if not accepted:
                 num_fails += 1
-                x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
+                #x = self.live_points.get_random_sample(self.cluster_volumes).get_values()[0]
+                point = self.live_points.get_random_sample(cluster_volumes)
+                x = point.get_values()[0]
 
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
 
@@ -154,9 +173,16 @@ class GaliNest(NestedSampler):
 
         return newsample
 
+    def move_one_step(self):
+        for _ in range(self.nlive_ini//2):
+            sample = self.kill_point()
+        logL = sample.get_logL()
+        for i in range(self.nlive_ini//2):
+            self.add_point(logL)
+
 
 if __name__ == "__main__":
-    ndims = 10
+    ndims = 32
     mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -182,11 +208,11 @@ if __name__ == "__main__":
                 label=f'p_{i}')
         )
 
-    ns = GaliNest(
-        nlive=25*len(params),
+    ns = DyGaliNest(
+        nlive=50*len(params),
         loglike=get_loglike,
         params=params,
-        clustering=True
+        clustering=False
     )
 
     ns.run()
@@ -196,9 +222,9 @@ if __name__ == "__main__":
     print('True logZ = ', np.log(1 / 10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
-    from getdist import plots, MCSamples
-    samples = ns.convert_to_getdist()
-    true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
-    g = plots.get_subplot_plotter()
-    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    g.export('test_galilean.png')
+    # from getdist import plots, MCSamples
+    # samples = ns.convert_to_getdist()
+    # true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
+    # g = plots.get_subplot_plotter()
+    # g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
+    # g.export('test_galilean.png')
