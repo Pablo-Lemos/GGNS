@@ -5,7 +5,7 @@ from random import randint
 from numpy import clip
 
 # Default floating point type
-dtype = torch.float32
+dtype = torch.float64
 
 class DyGaliNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
@@ -53,8 +53,8 @@ class DyGaliNest(NestedSampler):
         """
 
         num_reflections = 0
-        max_reflections = 4
-        min_reflections = 1
+        max_reflections = 4 #14
+        min_reflections = 1 #10
         x = position.clone()
         positions = torch.tensor([], dtype=dtype, device=self.device)
         loglikes = torch.tensor([], dtype=dtype, device=self.device)
@@ -78,6 +78,8 @@ class DyGaliNest(NestedSampler):
                 reflected = False
                 self.n_in_steps += 1
                 velocity *= (1 + 0.01*torch.rand_like(velocity))
+                # Generate a new random velocity and adjust its magnitude
+
                 if num_reflections > min_reflections:
                     positions = torch.cat((positions, x.unsqueeze(0)))
                     loglikes = torch.cat((loglikes, p_x.unsqueeze(0)))
@@ -121,7 +123,8 @@ class DyGaliNest(NestedSampler):
         # labels = point.get_labels()
         # x2 = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
         # while torch.allclose(x, x2):
-        #     x2 = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
+        #      x2 = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
+        #
 
         A = torch.cov(self.live_points.get_values().T)
         L = torch.linalg.cholesky(A)
@@ -130,10 +133,13 @@ class DyGaliNest(NestedSampler):
         num_fails = 0
         while not accepted:
             r = torch.randn_like(x)
-            r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            #r /= torch.linalg.norm(r, dim=-1, keepdim=True)
             #velocity = r * (x - x2)
             #velocity = r @ self.L
-            velocity = r * torch.diag(L)
+            #velocity = r * torch.min(torch.diag(L))
+            #velocity = r * torch.diag(L)
+            velocity = r * torch.std(self.live_points.get_values().T)
+            #velocity = r * torch.std(self.live_points.get_values().T)
             #velocity = r * torch.diag(A).sqrt()
             #velocity = alpha * torch.randn(self.nparams, device=self.device)
             new_x, new_loglike, num_pts = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
@@ -207,23 +213,27 @@ class DyGaliNest(NestedSampler):
 
         return newsample
 
-    def move_one_step(self):
-        for _ in range(self.nlive_ini//2):
-            sample = self.kill_point()
-            #print("killed point", sample.get_logL())
-        logL = sample.get_logL()
-        self.idx = 0
-        A = torch.cov(self.live_points.get_values().T)
-        self.L = torch.linalg.cholesky(A)
-        for i in range(self.nlive_ini//2):
-            #print(self.live_points.values.shape)
-            self.add_point(logL)
-            self.idx += 1
+    # def move_one_step(self):
+    #     for _ in range(self.nlive_ini//2):
+    #         sample = self.kill_point()
+    #         #print("killed point", sample.get_logL())
+    #     logL = sample.get_logL()
+    #     self.idx = 0
+    #     A = torch.cov(self.live_points.get_values().T)
+    #     self.L = torch.linalg.cholesky(A)
+    #     for i in range(self.nlive_ini//2):
+    #         #print(self.live_points.values.shape)
+    #         self.add_point(logL)
+    #         self.idx += 1
 
 
 if __name__ == "__main__":
-    ndims = 64
-    mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
+    ndims = 128
+    mvn = torch.distributions.MultivariateNormal(loc=torch.zeros(ndims),
+                                             scale_tril=torch.diag(
+                                                 torch.ones(ndims)))
+
+    mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
@@ -232,10 +242,12 @@ if __name__ == "__main__":
                                                      0.2*torch.ones(ndims)))
 
     #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
-    true_samples = mvn1.sample((20000,))
+    #print(true_samples.shape)
+    true_samples = mvn.sample((20000,))
 
     def get_loglike(theta):
         #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
+        #return lp
         return mvn1.log_prob(theta)
 
     params = []
@@ -251,16 +263,14 @@ if __name__ == "__main__":
 
     ns = DyGaliNest(
         nlive=25*len(params),
-        loglike=get_loglike,
+        loglike=mvn.log_prob,#get_loglike,
         params=params,
-        clustering=False
-    )
-
+        clustering=False)
     ns.run()
 
     # The true logZ is the inverse of the prior volume
     import numpy as np
-    print('True logZ = ', np.log(1 / 10**len(params)))
+    print('True logZ = ', np.log(1 /10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
     from getdist import plots, MCSamples
