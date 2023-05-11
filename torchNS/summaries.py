@@ -56,12 +56,6 @@ class NestedSamplingSummaries:
                                                        logL + self.logXp[label] -
                                                        torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
 
-        #assert torch.allclose(self.logZ, torch.logsumexp(self.logZp, 0)), f'{self.logZ} != {torch.logsumexp(self.logZp, 0)}'
-        # if not torch.allclose(torch.logsumexp(self.logZp, 0), self.logZ):
-        #     raise ValueError("logZp does not sum to logZ")
-
-        # log Xp
-        self.logXp[label] = self.logXp[label] + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
 
         # log Z2
         self.logZ2 = torch.logsumexp(torch.cat([self.logZ2.reshape(1),
@@ -80,6 +74,7 @@ class NestedSamplingSummaries:
                                                                                device=self.device))
                                                         ]), 0)
 
+
         # log ZXp
         self.logZXp[label] = torch.logsumexp(
             torch.cat([self.logZXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
@@ -95,12 +90,20 @@ class NestedSamplingSummaries:
                                                                    torch.as_tensor((np + 1.), device=self.device))
                                                                ]), 0)
 
+
         # log ZpXp
         self.logZpXp[label] = torch.logsumexp(
             torch.cat([self.logZpXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
                        self.logXpXq[label, label] + logL + torch.log(
                            torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
                        ]), 0)
+
+        #assert torch.allclose(self.logZ, torch.logsumexp(self.logZp, 0)), f'{self.logZ} != {torch.logsumexp(self.logZp, 0)}'
+        # if not torch.allclose(torch.logsumexp(self.logZp, 0), self.logZ):
+        #     raise ValueError("logZp does not sum to logZ")
+
+        # log Xp
+        self.logXp[label] = self.logXp[label] + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
 
         # log Xp^2
         self.logXpXq[label, label] = self.logXpXq[label, label] + torch.log(
