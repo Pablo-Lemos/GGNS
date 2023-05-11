@@ -135,7 +135,7 @@ class GaliNest(NestedSampler):
         '''
         newlike = -torch.inf
         while newlike < min_like:
-            if self.acc_rate_pure_ns > 1.1:
+            if self.acc_rate_pure_ns > 0.1:
                 newsample = self.sample_prior(npoints=1)
                 pure_ns = True
             else:
@@ -154,7 +154,6 @@ class GaliNest(NestedSampler):
 
         return newsample
 
-
 if __name__ == "__main__":
     ndims = 10
     mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
@@ -165,11 +164,13 @@ if __name__ == "__main__":
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
-    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    true_samples = mvn1.sample((20000,))
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
-        return lp
+        #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
+        #return lp
+        return mvn1.log_prob(theta)
 
     params = []
 
@@ -186,7 +187,7 @@ if __name__ == "__main__":
         nlive=25*len(params),
         loglike=get_loglike,
         params=params,
-        clustering=True
+        clustering=False
     )
 
     ns.run()
@@ -200,5 +201,5 @@ if __name__ == "__main__":
     samples = ns.convert_to_getdist()
     true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
     g = plots.get_subplot_plotter()
-    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
+    g.triangle_plot([true_samples, samples], [f'p{i}' for i in range(5)], filled=True, legend_labels=['True', 'GDNest'])
     g.export('test_galilean.png')

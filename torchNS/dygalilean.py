@@ -8,7 +8,7 @@ from numpy import clip
 dtype = torch.float64
 
 class DyGaliNest(NestedSampler):
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
 
         self.acceptance_rate = 1.0
@@ -52,8 +52,11 @@ class DyGaliNest(NestedSampler):
             position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
         """
 
+
         num_reflections = 0
-        max_reflections = 4 #14
+        #max_reflections = 2*self.nparams + 2
+        #min_reflections = 2*self.nparams
+        max_reflections = 5 #14
         min_reflections = 1 #10
         x = position.clone()
         positions = torch.tensor([], dtype=dtype, device=self.device)
@@ -133,32 +136,34 @@ class DyGaliNest(NestedSampler):
         num_fails = 0
         while not accepted:
             r = torch.randn_like(x)
-            #r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            velocity = r * alpha
             #velocity = r * (x - x2)
             #velocity = r @ self.L
             #velocity = r * torch.min(torch.diag(L))
             #velocity = r * torch.diag(L)
-            velocity = r * torch.std(self.live_points.get_values().T)
-            #velocity = r * torch.std(self.live_points.get_values().T)
+            # = r * torch.std(self.live_points.get_values().T)
+            #velocity = r * torch.min(torch.std(self.live_points.get_values().T, dim=-1))
             #velocity = r * torch.diag(A).sqrt()
             #velocity = alpha * torch.randn(self.nparams, device=self.device)
-            new_x, new_loglike, num_pts = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=dt, num_steps=num_steps)
+            new_x, new_loglike, num_pts = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike, dt=self.dt, num_steps=num_steps)
 
             #acceptance = self.n_in_steps / (self.n_out_steps + self.n_in_steps)
             #print(new_x, new_loglike, num_reflections)
             #print(self.loglike(x), self.loglike(new_x), min_loglike)
             #if acceptance > 0.5:
-            # if num_pts < 10:
-            #     self.dt = clip(0.9 * self.dt, 1e-5, 10.)
-            #     #print(f"Decreasing dt to {self.dt}")
-            # #elif acceptance < 0.2:
-            # elif num_pts > 50:
-            #     self.dt = clip(1.1 * self.dt, 1e-5, 10.)
-            #     #print(f"Increasing dt to {self.dt}")
-            # else:
-            #     accepted = new_loglike > min_loglike[0]
+            if num_pts <= 1:
+                self.dt = clip(0.9 * self.dt, 1e-5, 10.)
+                if self.verbose: print(f"Decreasing dt to {self.dt}, {num_pts} points")
+            #elif acceptance < 0.2:
+            elif num_pts > 20:
+                self.dt = clip(1.1 * self.dt, 1e-5, 10.)
+                if self.verbose: print(f"Increasing dt to {self.dt}, {num_pts} points")
+            else:
+                in_prior = (torch.min(new_x - self._lower) >= 0) and (torch.max(new_x - self._upper) <= 0)
+                accepted = (new_loglike > min_loglike[0]) and in_prior
 
-            accepted = new_loglike > min_loglike[0]
+            #accepted = new_loglike > min_loglike[0]
 
             if not accepted:
                 num_fails += 1
@@ -213,22 +218,22 @@ class DyGaliNest(NestedSampler):
 
         return newsample
 
-    # def move_one_step(self):
-    #     for _ in range(self.nlive_ini//2):
-    #         sample = self.kill_point()
-    #         #print("killed point", sample.get_logL())
-    #     logL = sample.get_logL()
-    #     self.idx = 0
-    #     A = torch.cov(self.live_points.get_values().T)
-    #     self.L = torch.linalg.cholesky(A)
-    #     for i in range(self.nlive_ini//2):
-    #         #print(self.live_points.values.shape)
-    #         self.add_point(logL)
-    #         self.idx += 1
+    def move_one_step(self):
+        for _ in range(self.nlive_ini//2):
+            sample = self.kill_point()
+            #print("killed point", sample.get_logL())
+        logL = sample.get_logL()
+        self.idx = 0
+        A = torch.cov(self.live_points.get_values().T)
+        self.L = torch.linalg.cholesky(A)
+        for i in range(self.nlive_ini//2):
+            #print(self.live_points.values.shape)
+            self.add_point(logL)
+            self.idx += 1
 
 
 if __name__ == "__main__":
-    ndims = 128
+    ndims = 64
     mvn = torch.distributions.MultivariateNormal(loc=torch.zeros(ndims),
                                              scale_tril=torch.diag(
                                                  torch.ones(ndims)))
@@ -265,6 +270,7 @@ if __name__ == "__main__":
         nlive=25*len(params),
         loglike=mvn.log_prob,#get_loglike,
         params=params,
+        tol=1e-1,
         clustering=False)
     ns.run()
 

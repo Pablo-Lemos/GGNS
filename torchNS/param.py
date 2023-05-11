@@ -185,19 +185,19 @@ class NSPoints:
         return sample
 
     def get_logL(self):
-        self._sort()
+        #self._sort()
         return self.logL
 
     def get_weights(self):
-        self._sort()
+        #self._sort()
         return self.weights
 
     def get_values(self):
-        self._sort()
+        #self._sort()
         return self.values
 
     def get_labels(self):
-        self._sort()
+        #self._sort()
         return self.labels
 
     def get_size(self):

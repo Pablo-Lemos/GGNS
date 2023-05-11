@@ -126,8 +126,12 @@ class Polychord(NestedSampler):
 
 if __name__ == "__main__":
     import time
-    ndims = 5
-    mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
+    ndims = 32
+    mvn = torch.distributions.MultivariateNormal(loc=torch.zeros(ndims),
+                                             scale_tril=torch.diag(
+                                                 torch.ones(ndims)))
+
+    mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
@@ -135,12 +139,14 @@ if __name__ == "__main__":
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
-    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
     #print(true_samples.shape)
+    true_samples = mvn.sample((20000,))
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
-        return lp
+        #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
+        #return lp
+        return mvn1.log_prob(theta)
 
     params = []
 
@@ -149,22 +155,22 @@ if __name__ == "__main__":
             Param(
                 name=f'p{i}',
                 prior_type='Uniform',
-                prior=(-5, 5),
+                prior=(-10, 10),
                 label=f'p_{i}')
         )
 
     ns = Polychord(
         nlive=25*len(params),
-        loglike=get_loglike,
+        loglike=mvn.log_prob,#get_loglike,
         params=params,
-        clustering=True)
+        clustering=False)
 
     start_time = time.time()
     ns.run()
 
     # The true logZ is the inverse of the prior volume
     import numpy as np
-    print('True logZ = ', np.log(1 / 10**len(params)))
+    print('True logZ = ', np.log(1 / 20**len(params)))
     print('Number of evaluations', ns.get_like_evals())
     print('Time taken', time.time() - start_time)
 
@@ -172,5 +178,5 @@ if __name__ == "__main__":
     samples = ns.convert_to_getdist()
     true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
     g = plots.get_subplot_plotter()
-    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
+    g.triangle_plot([true_samples, samples], [f'p{i}' for i in range(5)], filled=True, legend_labels=['True', 'GDNest'])
     g.export('test_polychord.png')
