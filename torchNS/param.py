@@ -69,20 +69,20 @@ class NSPoints:
 
         self.nparams = nparams
         self.values = torch.zeros([0, self.nparams], device=device)
-        self.weights = torch.ones(size=(0,), device=device)
+        self.logweights = torch.zeros(size=(0,), device=device)
         self.logL = torch.ones(size=(0,), device=device)
         self.currSize = 0
         self.labels = torch.zeros(size=(0,), device=device, dtype=torch.int64)
 
-    def add_samples(self, values, logL, weights, labels=None):
+    def add_samples(self, values, logL, logweights, labels=None):
         assert all(isinstance(i, torch.Tensor)
-                   for i in (values, logL, weights)), "Inputs must be tensors"
+                   for i in (values, logL, logweights)), "Inputs must be tensors"
         assert values.shape[1] == self.nparams, "Wrong dimensions"
-        assert values.shape[0] == weights.shape[0] == logL.shape[0], "weights and logL must be arrays"
+        assert values.shape[0] == logweights.shape[0] == logL.shape[0], "logweights and logL must be arrays"
 
         self.values = torch.cat([self.values, values], dim=0)
         self.logL = torch.cat([self.logL, logL], dim=0)
-        self.weights = torch.cat([self.weights, weights], dim=0)
+        self.logweights = torch.cat([self.logweights, logweights], dim=0)
         labels = torch.zeros(size=(values.shape[0],), device=values.device, dtype=torch.int64) if labels is None else labels
         self.labels = torch.cat([self.labels, labels], dim=0)
         self.currSize += values.shape[0]
@@ -93,25 +93,25 @@ class NSPoints:
 
         self.values = torch.cat([self.values, nspoint.values], dim=0)
         self.logL = torch.cat([self.logL, nspoint.logL], dim=0)
-        self.weights = torch.cat([self.weights, nspoint.weights], dim=0)
+        self.logweights = torch.cat([self.logweights, nspoint.logweights], dim=0)
         self.labels = torch.cat([self.labels, nspoint.labels], dim=0)
         self.currSize += nspoint.currSize
 
     def _sort(self):
         self.logL, indices = torch.sort(self.logL)
-        self.weights = self.weights[indices]
+        self.logweights = self.logweights[indices]
         self.values = self.values[indices]
         self.labels = self.labels[indices]
 
     def pop_by_index(self, idx):
         sample = NSPoints(self.nparams)
         sample.add_samples(values=self.values[idx:idx+1],
-                           weights=self.weights[idx:idx+1],
+                           logweights=self.logweights[idx:idx+1],
                            logL=self.logL[idx:idx+1],
                            labels=self.labels[idx:idx+1])
 
         self.values = torch.cat([self.values[:idx], self.values[idx+1:]], dim=0)
-        self.weights = torch.cat([self.weights[:idx], self.weights[idx+1:]], dim=0)
+        self.logweights = torch.cat([self.logweights[:idx], self.logweights[idx+1:]], dim=0)
         self.logL = torch.cat([self.logL[:idx], self.logL[idx+1:]], dim=0)
         self.labels = torch.cat([self.labels[:idx], self.labels[idx+1:]], dim=0)
         self.currSize -= 1
@@ -121,10 +121,10 @@ class NSPoints:
         self._sort()
         sample = NSPoints(self.nparams)
         sample.add_samples(values=self.values[:1],
-                           weights=self.weights[:1],
+                           logweights=self.logweights[:1],
                            logL=self.logL[:1],
                            labels=self.labels[:1])
-        self.values, self.weights, self.logL, self.labels = self.values[1:], self.weights[1:], self.logL[1:], \
+        self.values, self.logweights, self.logL, self.labels = self.values[1:], self.logweights[1:], self.logL[1:], \
                                                             self.labels[1:]
         self.currSize -= 1
         return sample
@@ -136,7 +136,7 @@ class NSPoints:
         idx = self.labels == label
         sample = NSPoints(self.nparams)
         sample.add_samples(values=self.values[idx],
-                           weights=self.weights[idx],
+                           logweights=self.logweights[idx],
                            logL=self.logL[idx],
                            labels=self.labels[idx])
         return sample
@@ -149,7 +149,7 @@ class NSPoints:
             idx = randint(0, self.currSize-1, size=(n_samples,))
 
             sample.add_samples(values=self.values[idx],
-                               weights=self.weights[idx],
+                               logweights=self.logweights[idx],
                                logL=self.logL[idx],
                                labels=self.labels[idx])
 
@@ -171,7 +171,7 @@ class NSPoints:
                         idx = randint(0, subset.currSize-1, size=(n_samples,))
 
                     sample.add_samples(values=subset.values[idx],
-                                       weights=subset.weights[idx],
+                                       logweights=subset.logweights[idx],
                                        logL=subset.logL[idx],
                                        labels=subset.labels[idx])
         return sample
@@ -187,7 +187,7 @@ class NSPoints:
         idx = self.labels == label
         sample = NSPoints(self.nparams)
         sample.add_samples(values=self.values[idx],
-                           weights=self.weights[idx],
+                           logweights=self.logweights[idx],
                            logL=self.logL[idx],
                            labels=self.labels[idx])
         sample.currSize = self.logL[idx].shape[0]
@@ -197,9 +197,13 @@ class NSPoints:
         self._sort()
         return self.logL
 
+    def get_log_weights(self):
+        self._sort()
+        return self.logweights
+
     def get_weights(self):
         self._sort()
-        return self.weights
+        return self.logweights.exp()
 
     def get_values(self):
         self._sort()

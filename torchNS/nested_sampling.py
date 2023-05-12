@@ -137,9 +137,9 @@ class NestedSampler:
                 logL[i] = self.loglike(sample)
 
             # Placeholder weights (will be calculated when the point is killed)
-            weights = torch.ones(len(logL), device=self.device)
+            logweights = torch.zeros(len(logL), device=self.device)
             points = NSPoints(self.nparams)
-            points.add_samples(values=prior_samples, weights=weights, logL=logL)
+            points.add_samples(values=prior_samples, logweights=logweights, logL=logL)
 
             # Count likelihood evaluations
             self.like_evals += npoints
@@ -148,6 +148,7 @@ class NestedSampler:
         def get_score(self, theta):
             if theta.dim() == 1:
                 self.like_evals += 1
+                theta = theta.unsqueeze(0)
             elif theta.dim() == 2:
                 self.like_evals += theta.shape[0]
             else:
@@ -329,7 +330,7 @@ class NestedSampler:
 
             #sample.weights = self.get_weight(sample)*torch.ones_like(sample.weights, device=self.device)
             logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p, device=self.device))
-            sample.weights = torch.exp(logweight) * torch.ones_like(sample.weights, device=self.device)
+            sample.logweights = logweight * torch.ones_like(sample.logweights, device=self.device)
             self.dead_points.add_nspoint(sample)
 
             if kill_cluster:
@@ -403,8 +404,8 @@ class NestedSampler:
             # Convert the prior weights to posterior weights
             # self.dead_points.weights *= torch.exp(
             #     self.dead_points.get_logL() - self.summaries.get_logZ())
-            log_weights = torch.log(self.dead_points.get_weights()) + self.dead_points.get_logL() - self.summaries.get_logZ()
-            self.dead_points.weights = torch.exp(log_weights)
+            log_weights = self.dead_points.get_log_weights() + self.dead_points.get_logL() - self.summaries.get_logZ()
+            self.dead_points.logweights = log_weights
 
             acc_rate = self.dead_points.get_size() / float(self.like_evals)
 

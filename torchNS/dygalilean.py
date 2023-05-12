@@ -145,7 +145,7 @@ class DyGaliNest(DynamicNestedSampler):
             # v_norm = torch.linalg.norm(velocity, dim=-1, keepdim=True)
             r = torch.randn_like(velocity[~reflected], dtype=dtype, device=self.device)
             r /= torch.linalg.norm(r, dim=-1, keepdim=True)
-            velocity[~reflected] = velocity[~reflected] * (1 + 1e-2 * r)
+            velocity[~reflected] = velocity[~reflected] * (1 + 5e-2 * r)
             # velocity[~reflected] = velocity[~reflected] * (1 + 1e-2 * torch.randn_like(velocity[~reflected]))
             # velocity[~reflected] = velocity[~reflected] / torch.linalg.norm(velocity[~reflected], dim=-1, keepdim=True) * v_norm[~reflected]
             n_out_steps += reflected.sum()
@@ -251,12 +251,12 @@ class DyGaliNest(DynamicNestedSampler):
 
             if out_frac > 0.2:
                 #self.dt *= 0.9
-                self.dt = clip(self.dt * 0.9, 1e-5, 1)
+                self.dt = clip(self.dt * 0.9, 1e-5, 10)
                 #active = torch.ones(x_ini.shape[0], dtype=torch.bool)
                 if self.verbose: print("Decreasing dt to ", self.dt)
             elif out_frac < 0.05:
                 #self.dt *= 1.1
-                self.dt = clip(self.dt * 1.1, 1e-5, 1)
+                self.dt = clip(self.dt * 1.1, 1e-5, 10)
                 #active = torch.ones(x_ini.shape[0], dtype=torch.bool)
                 if self.verbose: print("Increasing dt to ", self.dt)
             else:
@@ -276,7 +276,7 @@ class DyGaliNest(DynamicNestedSampler):
         sample = NSPoints(self.nparams)
         sample.add_samples(values=new_x,
                            logL=new_loglike,
-                           weights=torch.ones(new_loglike.shape[0], device=self.device))
+                           logweights=torch.zeros(new_loglike.shape[0], device=self.device))
         return sample
 
 
