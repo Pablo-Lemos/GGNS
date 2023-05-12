@@ -108,7 +108,7 @@ class DyGaliNest(DynamicNestedSampler):
         n_out_steps = 0
         n_in_steps = 0
         min_reflections = 0
-        max_reflections = 3
+        max_reflections = 5
         num_reflections = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
         num_inside_steps = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
         #for step in range(num_steps):
@@ -157,7 +157,7 @@ class DyGaliNest(DynamicNestedSampler):
 
         if len(pos_ls) == 0:
             pos_out = torch.zeros_like(x)
-            logl_out = torch.tensor(1e-100, dtype=torch.float64)
+            logl_out = torch.tensor(-1e30, dtype=torch.float64) * torch.ones(position.shape[0], dtype=dtype, device=self.device)
 
         else:
             positions = torch.stack(pos_ls, dim=0)
@@ -209,10 +209,10 @@ class DyGaliNest(DynamicNestedSampler):
         # x_ini = point.get_values()
         #labels = point.get_labels()
         x_ini = self.live_points.get_values()[:self.nlive_ini//2]
-        dt = 0.1
+        #dt = 0.1
 
         alpha = 1.
-        num_fails = 0
+        #num_fails = 0
 
         # A = torch.cov(self.live_points.get_values().T)
         # L = torch.linalg.cholesky(A)
@@ -331,7 +331,7 @@ class DyGaliNest(DynamicNestedSampler):
 
 
 if __name__ == "__main__":
-    ndims = 32
+    ndims = 64
     mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
