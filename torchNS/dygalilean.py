@@ -139,8 +139,8 @@ class DyGaliNest(DynamicNestedSampler):
             if torch.min(num_reflections) > min_reflections:
                 pos_ls.append(x.clone())
                 logl_ls.append(p_x.clone())
-                mask.append(~reflected)
-                #mask.append(~reflected * in_prior)
+                #mask.append(~reflected)
+                mask.append(~reflected * in_prior)
 
             # v_norm = torch.linalg.norm(velocity, dim=-1, keepdim=True)
             r = torch.randn_like(velocity[~reflected], dtype=dtype, device=self.device)
@@ -150,6 +150,8 @@ class DyGaliNest(DynamicNestedSampler):
             # velocity[~reflected] = velocity[~reflected] / torch.linalg.norm(velocity[~reflected], dim=-1, keepdim=True) * v_norm[~reflected]
             n_out_steps += reflected.sum()
             n_in_steps += (~reflected).sum()
+            #n_out_steps += (reflected + ~in_prior).sum()
+            #n_in_steps += (~reflected * in_prior).sum()
 
         out_frac = n_out_steps / (n_out_steps + n_in_steps)
 
@@ -203,10 +205,10 @@ class DyGaliNest(DynamicNestedSampler):
         cluster_volumes = torch.exp(self.summaries.get_logXp())
         #x = self.live_points.get_random_sample(cluster_volumes, n_samples=self.nlive_ini//2).get_values()
         #alpha = 1
-        point = self.live_points.get_random_sample(cluster_volumes, n_samples=self.nlive_ini//2)
-        x_ini = point.get_values()
+        # point = self.live_points.get_random_sample(cluster_volumes, n_samples=self.nlive_ini//2)
+        # x_ini = point.get_values()
         #labels = point.get_labels()
-        #x_ini = self.live_points.get_values()[:self.nlive_ini//2]
+        x_ini = self.live_points.get_values()[:self.nlive_ini//2]
         dt = 0.1
 
         alpha = 1.
@@ -257,12 +259,12 @@ class DyGaliNest(DynamicNestedSampler):
                 self.dt = clip(self.dt * 1.1, 1e-5, 1)
                 #active = torch.ones(x_ini.shape[0], dtype=torch.bool)
                 if self.verbose: print("Increasing dt to ", self.dt)
-           # else:
-            in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
-            active = (new_loglike < min_loglike) #+ (~in_prior)
-            #print("Loglike: ", torch.sum(new_loglike < min_loglike).item(), " / ", len(new_loglike))
-            #print(f"Active: {torch.sum(active).item()} / {len(active)}")
-            #active = ~in_prior
+            else:
+                in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
+                active = (new_loglike < min_loglike) + (~in_prior)
+                #print("Loglike: ", torch.sum(new_loglike < min_loglike).item(), " / ", len(new_loglike))
+                #print(f"Active: {torch.sum(active).item()} / {len(active)}")
+                #active = ~in_prior
 
             accepted = torch.sum(active) == 0
             # if not accepted:
@@ -296,7 +298,7 @@ class DyGaliNest(DynamicNestedSampler):
 
     def move_one_step(self):
         ''' Find highest log likes, get rid of those point, and sample a new ones '''
-        if self.acc_rate_pure_ns > 1.1:#(1/self.nparams):
+        if self.acc_rate_pure_ns > 1.1: #(1/self.nparams):
             sample = self.kill_point()
             min_like = sample.get_logL()
             newlike = -torch.inf
@@ -329,7 +331,7 @@ class DyGaliNest(DynamicNestedSampler):
 
 
 if __name__ == "__main__":
-    ndims = 64
+    ndims = 32
     mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -346,7 +348,7 @@ if __name__ == "__main__":
             theta = theta.reshape(1, -1)
         mask = (torch.min(theta, dim=-1)[0] >= -5 * torch.ones(theta.shape[0])) * ((torch.max(theta, dim=-1)[0] <= 5 * torch.ones(theta.shape[0])))
         #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
-        lp = mvn1.log_prob(theta) - 1e30 * (~mask)
+        lp = mvn1.log_prob(theta) #- 1 * (~mask).float() * torch.sum(theta**2, dim=-1)#.reshape(-1, 1)
         return lp
 
     params = []
