@@ -259,7 +259,7 @@ class DyGaliNest(DynamicNestedSampler):
                 if self.verbose: print("Increasing dt to ", self.dt)
            # else:
             in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
-            active = (new_loglike < min_loglike) + (~in_prior)
+            active = (new_loglike < min_loglike) #+ (~in_prior)
             #print("Loglike: ", torch.sum(new_loglike < min_loglike).item(), " / ", len(new_loglike))
             #print(f"Active: {torch.sum(active).item()} / {len(active)}")
             #active = ~in_prior
@@ -346,7 +346,7 @@ if __name__ == "__main__":
             theta = theta.reshape(1, -1)
         mask = (torch.min(theta, dim=-1)[0] >= -5 * torch.ones(theta.shape[0])) * ((torch.max(theta, dim=-1)[0] <= 5 * torch.ones(theta.shape[0])))
         #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
-        lp = mvn1.log_prob(theta) #- 1e30 * (~mask)
+        lp = mvn1.log_prob(theta) - 1e30 * (~mask)
         return lp
 
     params = []
