@@ -429,14 +429,21 @@ class NestedSampler:
 
             # Run the algorithm
             max_epsilon = 1e1000
+
+            # From printing and clustering updates
+            prev_multiple = 0
+
             nsteps = 0
             while (self.n_clusters > 0 and max_epsilon > self.tol):
                 self.move_one_step()
                 epsilon = self._get_epsilon()
                 max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
 
-                if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
+                next_multiple = (prev_multiple // self.nlive_ini + 1) * self.nlive_ini
+                #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
                 #if self.verbose:
+                if self.n_accepted >= next_multiple:
+                    prev_multiple = next_multiple
                     if self.clustering:
                         self.find_clusters()
 
@@ -551,6 +558,7 @@ if __name__ == "__main__":
 
     from getdist import plots, MCSamples
     samples = ns.convert_to_getdist()
+
     true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
     g = plots.get_subplot_plotter()
     g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])

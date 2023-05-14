@@ -117,7 +117,7 @@ class DyGaliNest(DynamicNestedSampler):
         mask = []
         step = 0
         x = position.clone()
-        while (torch.min(num_reflections) < max_reflections):# and (step < max_steps):
+        while (torch.min(num_reflections) < max_reflections) and (step < max_steps):
             # reflected = False
             x += velocity * dt
             in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0])) * (
@@ -166,6 +166,7 @@ class DyGaliNest(DynamicNestedSampler):
             #idx = torch.randint(0, positions.shape[0] - 2, (position.shape[0],))
             pos_out = torch.zeros(position.shape, dtype=dtype, device=self.device)
             logl_out = torch.zeros(position.shape[0], dtype=dtype, device=self.device)
+
         #print(positions.shape)
         # if len(positions) == 0:
         #     pos_out = torch.zeros_like(x)
@@ -189,7 +190,7 @@ class DyGaliNest(DynamicNestedSampler):
         return pos_out, logl_out, out_frac #torch.min(num_inside_steps/num_reflections)
 
 
-    def reflect_sampling(self, min_loglike):
+    def reflect_sampling(self, min_loglike, labels=None):
         """
         Slice sampling algorithm for PyTorch.
 
@@ -202,13 +203,14 @@ class DyGaliNest(DynamicNestedSampler):
         Returns:
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
-        cluster_volumes = torch.exp(self.summaries.get_logXp())
-        #x = self.live_points.get_random_sample(cluster_volumes, n_samples=self.nlive_ini//2).get_values()
-        #alpha = 1
-        # point = self.live_points.get_random_sample(cluster_volumes, n_samples=self.nlive_ini//2)
-        # x_ini = point.get_values()
-        #labels = point.get_labels()
-        x_ini = self.live_points.get_values()[:self.nlive_ini//2]
+        if self.n_clusters > 1:
+            #cluster_volumes = torch.exp(self.summaries.get_logXp())
+            #point = self.live_points.get_random_sample(labels, n_samples=torch.sum(labels).item())
+            point = self.live_points.get_samples_from_labels(labels)
+            x_ini = point.get_values()
+            #labels = point.get_labels()
+        else:
+            x_ini = self.live_points.get_values()[:self.nlive_ini//2]
         #dt = 0.1
 
         alpha = 1.
@@ -226,8 +228,8 @@ class DyGaliNest(DynamicNestedSampler):
         #velocity = r @ L.T
         #velocity = r * torch.diag(L)
         while not accepted:
-            assert torch.min(
-                self.loglike(x_ini)) >= min_loglike, f"min_loglike = {min_loglike}, x_loglike = {self.loglike(x_ini)}"
+            # assert torch.min(
+            #     self.loglike(x_ini)) >= min_loglike, f"min_loglike = {min_loglike}, x_loglike = {self.loglike(x_ini)}"
 
             r = torch.randn_like(x_ini, dtype=dtype, device=self.device)
             r /= torch.linalg.norm(r, dim=-1, keepdim=True)
@@ -244,7 +246,7 @@ class DyGaliNest(DynamicNestedSampler):
                                                                                        velocity=velocity[active],
                                                                                        min_like=min_loglike,
                                                                                        dt=self.dt,
-                                                                                       max_steps=100)
+                                                                                       max_steps=100*self.nparams)
             new_x[active] = new_x_active.to(dtype)
             new_loglike[active] = new_loglike_active.to(dtype)
             #print("Accepted: ", torch.sum(new_loglike > min_loglike).item(), " / ", len(new_loglike))
@@ -267,9 +269,10 @@ class DyGaliNest(DynamicNestedSampler):
                 #active = ~in_prior
 
             accepted = torch.sum(active) == 0
-            # if not accepted:
-            #     point = self.live_points.get_random_sample(cluster_volumes, n_samples=self.nlive_ini // 2)
-            #     x_ini = point.get_values()
+            #if not accepted:
+                #if self.verbose: print(f"Active: {torch.sum(active).item()} / {len(active)}")
+                # point = self.live_points.get_random_sample(cluster_volumes, n_samples=torch.sum(active).item())
+                # x_ini[active] = point.get_values()
 
         assert torch.min(new_loglike) >= min_loglike, f"min_loglike = {min_loglike}, new_loglike = {new_loglike}"
         #assert (torch.min(new_x - self._lower).item() >= 0) and (torch.max(new_x - self._upper).item() <= 0)
@@ -280,7 +283,23 @@ class DyGaliNest(DynamicNestedSampler):
         return sample
 
 
-    def find_new_sample_batch(self, min_like, n_points):
+    def find_new_sample_batch(self, min_like, n_points, labels=None):
+        ''' Sample the prior until finding a sample with higher likelihood than a
+        given value
+        Parameters
+        ----------
+          min_like : float
+            The threshold log-likelihood
+        Returns
+        -------
+          newsample : pd.DataFrame
+            A new sample
+        '''
+        newsamples = self.reflect_sampling(min_like, labels=labels)
+
+        return newsamples
+
+    def find_new_sample(self, min_like):
         ''' Sample the prior until finding a sample with higher likelihood than a
         given value
         Parameters
@@ -298,57 +317,51 @@ class DyGaliNest(DynamicNestedSampler):
 
     def move_one_step(self):
         ''' Find highest log likes, get rid of those point, and sample a new ones '''
-        if self.acc_rate_pure_ns > 1.1: #(1/self.nparams):
-            sample = self.kill_point()
-            min_like = sample.get_logL()
-            newlike = -torch.inf
-            while newlike < min_like:
-                newsample = self.sample_prior(npoints=1)
-                newlike = newsample.get_logL()[0]
-                self.n_tries_pure_ns += 1
-
-            if self.clustering:
-                # Find closest point to new sample
-                values = self.live_points.get_values()
-                dist = torch.sum((values - newsample.get_values())**2, dim=1)
-                idx = torch.argmin(dist)
-
-                # Assign its label to the new point
-                newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
-
-            #self.n_accepted += 1
-            self.n_accepted_pure_ns += 1
-            self.acc_rate_pure_ns = self.n_accepted_pure_ns / self.n_tries_pure_ns
-            self.live_points.add_nspoint(newsample)
-        else:
+        if self.n_clusters == 1:
             n_points = self.nlive_ini//2
             for _ in range(n_points):
                 sample = self.kill_point()
 
             logl = sample.get_logL().clone()
 
-            self.add_point_batch(min_logL=logl, n_points=n_points)
+            self.add_point_batch(min_logL=logl, n_points=n_points, labels=torch.zeros(n_points, dtype=torch.int))
+        else:
+            new_labels = torch.zeros(self.n_clusters, dtype=torch.int)
+            sample = self.kill_point()
+            cluster_volumes = torch.exp(self.summaries.get_logXp())
+            num_points = self.live_points.count_labels()
+            idx = torch.multinomial(cluster_volumes, 1)
+            new_labels[idx] += 1
+            while torch.min(num_points - new_labels) > 1:
+                sample = self.kill_point()
+                cluster_volumes = torch.exp(self.summaries.get_logXp())
+                num_points = self.live_points.count_labels()
+                idx = torch.multinomial(cluster_volumes, 1)
+                new_labels[idx] += 1
+
+            logl = sample.get_logL().clone()
+            self.add_point_batch(min_logL=logl, n_points=torch.sum(new_labels).item(), labels=new_labels)
 
 
 if __name__ == "__main__":
     ndims = 64
-    mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
+    mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
-    mvn2 = torch.distributions.MultivariateNormal(loc=-1*torch.ones(ndims),
+    mvn2 = torch.distributions.MultivariateNormal(loc=-2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
 
-    #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
-    true_samples = mvn1.sample((5000,))
+    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    #true_samples = mvn1.sample((5000,))
 
     def get_loglike(theta):
         if len(theta.shape) == 1:
             theta = theta.reshape(1, -1)
         mask = (torch.min(theta, dim=-1)[0] >= -5 * torch.ones(theta.shape[0])) * ((torch.max(theta, dim=-1)[0] <= 5 * torch.ones(theta.shape[0])))
-        #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
-        lp = mvn1.log_prob(theta) #- 1 * (~mask).float() * torch.sum(theta**2, dim=-1)#.reshape(-1, 1)
+        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
+        #lp = mvn1.log_prob(theta) #- 1 * (~mask).float() * torch.sum(theta**2, dim=-1)#.reshape(-1, 1)
         return lp
 
     params = []
@@ -367,7 +380,8 @@ if __name__ == "__main__":
         loglike=get_loglike,
         params=params,
         verbose=True,
-        clustering=False,
+        clustering=True,
+        dt_ini=.5,
         tol=1e-2
     )
 
@@ -381,6 +395,7 @@ if __name__ == "__main__":
     from getdist import plots, MCSamples
     samples = ns.convert_to_getdist()
     true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
+    samples.saveAsText(f'2modes_dim{ndim}.txt')
     g = plots.get_subplot_plotter()
     g.triangle_plot([true_samples, samples], [f'p{i}' for i in range(5)], filled=True, legend_labels=['True', 'GDNest'])
     g.export('test_dygalilean.png')

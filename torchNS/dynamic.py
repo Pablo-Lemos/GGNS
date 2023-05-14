@@ -21,9 +21,9 @@ class DynamicNestedSampler(NestedSampler):
 
         self.add_point_batch(min_logL=sample.get_logL(), n_points=n_points)
 
-    def add_point_batch(self, min_logL, n_points):
+    def add_point_batch(self, min_logL, n_points, labels=None):
         # Add a new sample
-        newsample = self.find_new_sample_batch(min_logL, n_points=n_points)
+        newsample = self.find_new_sample_batch(min_logL, n_points=n_points, labels=labels)
         assert torch.max(newsample.get_logL()) > min_logL, "New sample has lower likelihood than old one"
 
         if self.clustering:
@@ -39,7 +39,7 @@ class DynamicNestedSampler(NestedSampler):
         self.n_accepted += n_points
         self.live_points.add_nspoint(newsample)
 
-    def find_new_sample_batch(self, min_like, n_points):
+    def find_new_sample_batch(self, min_like, n_points, labels=None):
             ''' Run a for loop over find_new_sample
             '''
             sample = NSPoints(self.nparams)
