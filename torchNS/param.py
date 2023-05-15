@@ -166,6 +166,7 @@ class NSPoints:
         for label, n_samples in enumerate(n_samples_per_label):
             if n_samples > 0:
                 subset = self.label_subset(label)
+                print(label, n_samples, subset.get_size())
                 if subset.get_size() <= 1:
                     idx = [0] * n_samples
                 else:

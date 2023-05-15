@@ -26,7 +26,7 @@ class DynamicNestedSampler(NestedSampler):
         newsample = self.find_new_sample_batch(min_logL, n_points=n_points, labels=labels)
         assert torch.max(newsample.get_logL()) > min_logL, "New sample has lower likelihood than old one"
 
-        if self.clustering:
+        if self.n_clusters > 1:
             # Find closest point to new sample
             values = self.live_points.get_values()
 
