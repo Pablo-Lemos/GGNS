@@ -127,7 +127,7 @@ class Polychord(NestedSampler):
 
 if __name__ == "__main__":
     import time
-    ndims = 10
+    ndims = 32
     mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -140,7 +140,8 @@ if __name__ == "__main__":
 
     def get_loglike(theta):
         lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
-        return lp
+        mask = (torch.min(theta, dim=-1)[0] >= -5) * ((torch.max(theta, dim=-1)[0] <= 5))
+        return lp - 1e30 * (1 - mask.float())
 
     params = []
 

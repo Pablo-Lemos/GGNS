@@ -93,9 +93,9 @@ class GaliNest(NestedSampler):
         samples -- A PyTorch tensor of shape (num_samples,) representing the generated samples.
         """
         cluster_volumes = torch.exp(self.summaries.get_logXp())
-        point = self.live_points.get_random_sample(cluster_volumes)
-        x = point.get_values()
-        label = point.get_labels()
+        initial_point = self.live_points.get_random_sample(cluster_volumes)
+        x = initial_point.get_values()
+        label = initial_point.get_labels()
 
         # subset = self.live_points.label_subset(label)
         # if subset.get_size() == 1:
@@ -164,7 +164,8 @@ class GaliNest(NestedSampler):
         sample = NSPoints(self.nparams)
         sample.add_samples(values=new_x.reshape(1, -1),
                            logL=new_loglike.reshape(1),
-                           weights=torch.ones(1, device=self.device))
+                           logweights=torch.ones(1, device=self.device),
+                           labels=initial_point.get_labels())
         return sample
 
 
@@ -182,7 +183,7 @@ class GaliNest(NestedSampler):
         '''
         newlike = -torch.inf
         while newlike < min_like:
-            if self.acc_rate_pure_ns > 0.1:
+            if self.acc_rate_pure_ns > 1.1:
                 newsample = self.sample_prior(npoints=1)
                 pure_ns = True
             else:
@@ -217,7 +218,8 @@ if __name__ == "__main__":
     def get_loglike(theta):
         #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
         lp = mvn1.log_prob(theta)
-        return lp
+        mask = (torch.min(theta, dim=-1)[0] >= -5) * (torch.max(theta, dim=-1)[0] <= 5)
+        return lp  - 1e30 * (1 - mask.float())
 
     params = []
 

@@ -107,8 +107,8 @@ class DyGaliNest(DynamicNestedSampler):
         assert(len(position.shape) == 2), "Position must be a 2D tensor"
         n_out_steps = 0
         n_in_steps = 0
-        min_reflections = 0
-        max_reflections = 5
+        min_reflections = 5
+        max_reflections = 10
         num_reflections = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
         num_inside_steps = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
         #for step in range(num_steps):
@@ -121,12 +121,13 @@ class DyGaliNest(DynamicNestedSampler):
             #print(step, torch.min(num_reflections), torch.max(num_reflections))
             #print(x[num_reflections == torch.min(num_reflections)])
             # reflected = False
-            x += velocity * dt
+            velocity_normed = velocity / torch.norm(velocity, dim=-1, keepdim=True)
+            x += velocity * dt #/ torch.abs(torch.einsum('ij,ij->i', self.get_score(x)[1], velocity_normed.to(torch.float32)).reshape(-1, 1))
             # x = torch.clip(
             #     x, self._lower, self._upper
             # )
-            box_reflected = (torch.min(x - self._lower, dim=-1)[0] < torch.zeros(x.shape[0])) * (
-                        torch.max(x - self._upper, dim=-1)[0] > torch.zeros(x.shape[0]))
+            # box_reflected = (torch.min(x - self._lower, dim=-1)[0] < torch.zeros(x.shape[0])) * (
+            #             torch.max(x - self._upper, dim=-1)[0] > torch.zeros(x.shape[0]))
 
 
             # Reflect off the walls
@@ -143,6 +144,7 @@ class DyGaliNest(DynamicNestedSampler):
             in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0])) * (
                         torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0]))
 
+            box_reflected = ~in_prior
             #assert torch.sum(~in_prior) == 0
             # Slightly perturb the position to decorrelate the samples
             #position *= (1 + 1e-2 * torch.randn_like(position))
@@ -166,11 +168,13 @@ class DyGaliNest(DynamicNestedSampler):
                 logl_ls.append(p_x.clone())
                 #mask.append(~reflected)
                 mask.append(~reflected * in_prior)
+                a = 1 + 1
+
 
             # v_norm = torch.linalg.norm(velocity, dim=-1, keepdim=True)
             r = torch.randn_like(velocity[~reflected * ~box_reflected], dtype=dtype, device=self.device)
             r /= torch.linalg.norm(r, dim=-1, keepdim=True)
-            velocity[~reflected * ~box_reflected] = velocity[~reflected * ~box_reflected] * (1 + 5e-2 * r)
+            velocity[~reflected * ~box_reflected] = velocity[~reflected * ~box_reflected] #* (1 + 5e-2 * r)
             # velocity[~reflected] = velocity[~reflected] * (1 + 1e-2 * torch.randn_like(velocity[~reflected]))
             # velocity[~reflected] = velocity[~reflected] / torch.linalg.norm(velocity[~reflected], dim=-1, keepdim=True) * v_norm[~reflected]
             n_out_steps += reflected.sum()
@@ -339,7 +343,7 @@ class DyGaliNest(DynamicNestedSampler):
 
     def move_one_step(self):
         ''' Find highest log likes, get rid of those point, and sample a new ones '''
-        if self.acc_rate_pure_ns > 0.1:#(1/self.nparams):
+        if self.acc_rate_pure_ns > 1.1:#(1/self.nparams):
             sample = self.kill_point()
             min_like = sample.get_logL()
             newlike = -torch.inf
@@ -406,7 +410,7 @@ if __name__ == "__main__":
             theta = theta.reshape(1, -1)
         mask = (torch.min(theta, dim=-1)[0] >= -5 * torch.ones(theta.shape[0])) * ((torch.max(theta, dim=-1)[0] <= 5 * torch.ones(theta.shape[0])))
         #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
-        lp = mvn1.log_prob(theta) #- 1 * (~mask).float() * torch.sum(theta**2, dim=-1)#.reshape(-1, 1)
+        lp = mvn1.log_prob(theta)#$- 1e30 * (1 - mask.float()) #- 1 * (~mask).float() * torch.sum(theta**2, dim=-1)#.reshape(-1, 1)
         return lp
 
     params = []
@@ -426,7 +430,7 @@ if __name__ == "__main__":
         params=params,
         verbose=True,
         clustering=False,
-        dt_ini=0.1,
+        dt_ini=1/len(params),
         tol=1e-1
     )
 
@@ -443,4 +447,4 @@ if __name__ == "__main__":
     #samples.saveAsText(f'2modes_dim{ndims}')
     g = plots.get_subplot_plotter()
     g.triangle_plot([true_samples, samples], [f'p{i}' for i in range(5)], filled=True, legend_labels=['True', 'GDNest'])
-    g.export('test_dygalilean.png')
+    g.export('./plots/test_dygalilean.png')

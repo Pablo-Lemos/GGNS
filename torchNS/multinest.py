@@ -10,6 +10,8 @@ class MultiNest(NestedSampler):
                  eff=0.1, clustering=False, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, verbose=verbose, clustering=clustering, device=device)
         self.eff = eff
+        if clustering:
+            raise NotImplementedError("Clustering not implemented for MultiNest")
 
     def fit_normal(self):
         x = self.live_points.get_values()
