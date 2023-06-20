@@ -67,16 +67,14 @@ class Polychord(NestedSampler):
 
         # Sample a new x within the interval
         while True:
-            #print(L, R)
             x0Ld = torch.linalg.norm((L - x))#torch.sum((x - L) ** 2, dim=0)**0.5
             x0Rd = torch.linalg.norm((R - x))#torch.sum((x - R) ** 2, dim=0)**0.5
 
             new_x = x + (torch.rand(1, device=self.device) * (x0Rd + x0Ld) - x0Ld) * d
-            #new_x = torch.clamp(new_x, self._lower, self._upper)
             new_log_prob, _ = self.get_score(new_x)
 
             if new_log_prob > log_slice_height:
-                x = new_x
+                x = new_x.clone()
                 break
             else:
                 if (new_x - x).dot(d) < 0:
@@ -87,17 +85,20 @@ class Polychord(NestedSampler):
         return x, new_log_prob
 
 
-    def grad_desc(self, min_like):
+    def find_with_slice_sampling(self, min_like):
         cluster_volumes = torch.exp(self.summaries.get_logXp())
-        curr_value = self.live_points.get_random_sample(cluster_volumes).get_values()[0]
+        initial_point = self.live_points.get_random_sample(cluster_volumes)
+        curr_value = initial_point.get_values()[0]
 
         for i in range(self.n_repeats):
             new_value, new_loglike = self.slice_sampling(min_like, curr_value)
+            curr_value = new_value.clone()
 
         sample = NSPoints(self.nparams)
         sample.add_samples(values=new_value.reshape(1, -1),
                            logL=new_loglike.reshape(1),
-                           weights=torch.ones(1, device=self.device))
+                           logweights=torch.zeros(1, device=self.device),
+                           labels=initial_point.get_labels())
         return sample
 
 
@@ -115,7 +116,7 @@ class Polychord(NestedSampler):
         '''
         newlike = -torch.inf
         while newlike < min_like:
-            newsample = self.grad_desc(min_like)
+            newsample = self.find_with_slice_sampling(min_like)
             newlike = newsample.get_logL()[0]
             self.n_tries += 1
 
@@ -126,7 +127,7 @@ class Polychord(NestedSampler):
 
 if __name__ == "__main__":
     import time
-    ndims = 5
+    ndims = 10
     mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -136,10 +137,9 @@ if __name__ == "__main__":
                                                      0.2*torch.ones(ndims)))
 
     true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
-    #print(true_samples.shape)
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False) - torch.log(torch.tensor(2.0))
+        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
         return lp
 
     params = []
@@ -172,5 +172,5 @@ if __name__ == "__main__":
     samples = ns.convert_to_getdist()
     true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
     g = plots.get_subplot_plotter()
-    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    g.export('test_polychord.png')
+    g.triangle_plot([true_samples, samples], [f'p{i}' for i in range(5)], filled=True, legend_labels=['True', 'GDNest'])
+    g.export('./plots/test_polychord.png')

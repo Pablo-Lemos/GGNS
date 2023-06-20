@@ -334,6 +334,7 @@ class NestedSampler:
             self.dead_points.add_nspoint(sample)
 
             if kill_cluster:
+                self.live_points.labels[self.live_points.labels > label] -= 1
                 self.summaries.kill_cluster(label)
                 self.n_clusters = self.summaries.n_clusters
 

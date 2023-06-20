@@ -166,17 +166,20 @@ class NSPoints:
         for label, n_samples in enumerate(n_samples_per_label):
             if n_samples > 0:
                 subset = self.label_subset(label)
-                print(label, n_samples, subset.get_size())
                 if subset.get_size() <= 1:
                     idx = [0] * n_samples
                 else:
                     assert n_samples <= subset.get_size(), "Number of samples must be less than the number of points in the subset"
                     idx = choice(subset.currSize, n_samples.item(), replace=False)
 
-                sample.add_samples(values=subset.values[idx],
-                                   logweights=subset.logweights[idx],
-                                   logL=subset.logL[idx],
-                                   labels=subset.labels[idx])
+                try:
+                    sample.add_samples(values=subset.values[idx],
+                                       logweights=subset.logweights[idx],
+                                       logL=subset.logL[idx],
+                                       labels=subset.labels[idx])
+                except IndexError:
+                    print(n_samples, subset.currSize, idx)
+                    raise IndexError
 
         return sample
 
