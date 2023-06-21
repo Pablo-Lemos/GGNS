@@ -41,53 +41,84 @@ class DyGaliNest(DynamicNestedSampler):
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
         #assert p.prior_type == "uniform" for p in self.params, "Prior must be uniform for now"
 
-    # def simulate_particle_in_box(self, position, velocity, min_like, dt, num_steps):
-    #     """
-    #     Simulate the motion of a particle in a box with walls defined by the function p(X) = p0,
-    #     where X is a three-vector (x, y, z), using PyTorch.
-    #
-    #     Args:
-    #         position (torch.Tensor): Initial position of the particle, shape (3,).
-    #         velocity (torch.Tensor): Initial velocity of the particle, shape (3,).
-    #         p_func (callable): Function that computes p(X) for a given three-vector X.
-    #         p0 (float): Value of p0 for the walls of the box.
-    #         dt (float): Time step for numerical integration.
-    #         num_steps (int): Number of time steps to simulate.
-    #
-    #     Returns:
-    #         position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
-    #     """
-    #     assert(len(position.shape) == 2), "Position must be a 2D tensor"
-    #     n_out_steps = 0
-    #     n_in_steps = 0
-    #     x = position.clone()
-    #     for step in range(num_steps):
-    #         # reflected = False
-    #         x += velocity * dt #* (1 + 0.1 * torch.randn(1, dtype=dtype, device=self.device))
-    #         # Slightly perturb the position to decorrelate the samples
-    #         #position *= (1 + 1e-2 * torch.randn_like(position))
-    #         p_x, grad_p_x = self.get_score(x)
-    #
-    #         reflected = p_x <= min_like
-    #         normal = grad_p_x / torch.norm(grad_p_x, dim=1, keepdim=True)
-    #         #delta_velocity = 2 * torch.tensordot(velocity, normal, dims=([1], [1])) * normal
-    #         normal = normal.to(dtype)
-    #         delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
-    #         velocity[reflected, :] -= delta_velocity[reflected, :] #* (1 + 1e-2 * torch.randn_like(velocity[reflected]))
-    #
-    #         r = torch.randn_like(velocity[~reflected], dtype=dtype, device=self.device)
-    #         r /= torch.linalg.norm(r, dim=-1, keepdim=True)
-    #         velocity[~reflected] = velocity[~reflected] * (1 + 1e-2 * r)
-    #         n_out_steps += reflected.sum()
-    #         n_in_steps += (~reflected).sum()
-    #
-    #     out_frac = n_out_steps / (n_out_steps + n_in_steps)
-    #
-    #     return x, p_x, out_frac
+
+    def simulate_particle_in_box_v2(self, position, velocity, min_like, dt):
+        assert(len(position.shape) == 2), "Position must be a 2D tensor"
+        n_out_steps = 0
+        n_in_steps = 0
+        min_reflections = 10
+        num_reflections = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
+        num_inside_steps = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
+        last_reflections = torch.zeros_like(position)
+        new_reflections = torch.zeros_like(position)
+        just_reflected = torch.zeros(position.shape[0], dtype=torch.bool, device=self.device)
+
+        step = 0
+        x = position.clone()
+        while torch.min(num_reflections) < min_reflections:
+            x += velocity * dt
+
+            # Reflect off the walls
+            v_low = torch.zeros_like(velocity)
+            v_high = torch.zeros_like(velocity)
+            v_low[x < self._lower] = 1.
+            v_high[x > self._upper] = -1.
+            v_ref = v_low * (self._lower - x) + v_high * (self._upper - x)
+            v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
+
+            in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0])) * (
+                        torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0]))
+
+            box_reflected = ~in_prior
+
+            p_x, grad_p_x = self.get_score(x)
+            step += 1
+
+            reflected = (p_x <= min_like)
+            normal = grad_p_x / torch.norm(grad_p_x, dim=1, keepdim=True)
+            normal = normal.to(dtype)
+            delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
+            delta_velocity_ref = 2 * torch.einsum('ai, ai -> a', velocity, v_ref).reshape(-1, 1) * v_ref
+            velocity[reflected * ~box_reflected, :] -= delta_velocity[reflected * ~box_reflected, :]
+            velocity[box_reflected * ~reflected, :] -= delta_velocity_ref[box_reflected * ~reflected, :]
+
+            num_reflections += reflected.clone()
+            num_inside_steps += ~reflected.clone()
+
+            mask = reflected + box_reflected
+
+            # TODO: An issue here is that I only want to update for NEW reflections, i.e. I dont want to do this step for consecutive reflections
+            last_reflections[mask] = new_reflections[mask].clone()
+            new_reflections[mask] = x[mask].clone()
+
+            r = torch.randn_like(velocity[~reflected * ~box_reflected], dtype=dtype, device=self.device)
+            r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            velocity[~reflected * ~box_reflected] = velocity[~reflected * ~box_reflected] #* (1 + 5e-2 * r)
+            n_out_steps += reflected.sum()
+            n_in_steps += (~reflected).sum()
+
+        out_frac = n_out_steps / (n_out_steps + n_in_steps)
+
+        # Pick a point between last_reflections and new_reflections
+        segments = new_reflections - last_reflections
+        pos_out = torch.zeros_like(position)
+        mask2 = torch.ones(position.shape[0], dtype=torch.bool, device=self.device)
+
+        # Generate random values between 0 and 1
+        random_values = torch.rand((torch.sum(mask2), 1))
+
+        # Multiply the line segments by the random values
+        # to get the points along the segments
+        pos_out[mask2] = last_reflections[mask2] + random_values * segments[mask2]
+        logl_out, _ = self.get_score(pos_out)
+        mask2 = logl_out < min_like
+
+        logl_out[mask2] = -1e30
+
+        return pos_out, logl_out, out_frac
 
 
 
-    #@torch.compile
     def simulate_particle_in_box(self, position, velocity, min_like, dt, max_steps):
         """
         Simulate the motion of a particle in a box with walls defined by the function p(X) = p0,
@@ -117,18 +148,13 @@ class DyGaliNest(DynamicNestedSampler):
         mask = []
         step = 0
         x = position.clone()
+
         while (torch.min(num_reflections) < max_reflections):# and (step < max_steps):
             #print(step, torch.min(num_reflections), torch.max(num_reflections))
             #print(x[num_reflections == torch.min(num_reflections)])
             # reflected = False
             velocity_normed = velocity / torch.norm(velocity, dim=-1, keepdim=True)
             x += velocity * dt #/ torch.abs(torch.einsum('ij,ij->i', self.get_score(x)[1], velocity_normed.to(torch.float32)).reshape(-1, 1))
-            # x = torch.clip(
-            #     x, self._lower, self._upper
-            # )
-            # box_reflected = (torch.min(x - self._lower, dim=-1)[0] < torch.zeros(x.shape[0])) * (
-            #             torch.max(x - self._upper, dim=-1)[0] > torch.zeros(x.shape[0]))
-
 
             # Reflect off the walls
             v_low = torch.zeros_like(velocity)
@@ -137,50 +163,36 @@ class DyGaliNest(DynamicNestedSampler):
             v_high[x > self._upper] = -1.
             v_ref = v_low * (self._lower - x) + v_high * (self._upper - x)
             v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
-            #x = torch.where(x < self._lower, 2 * self._lower - x, x)
-            #x = torch.where(x > self._upper, 2 * self._upper - x, x)
-            #v_ref = torch.where(x > self._upper, -velocity, velocity)
 
             in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0])) * (
                         torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0]))
 
             box_reflected = ~in_prior
-            #assert torch.sum(~in_prior) == 0
-            # Slightly perturb the position to decorrelate the samples
-            #position *= (1 + 1e-2 * torch.randn_like(position))
+
             p_x, grad_p_x = self.get_score(x)
             step += 1
 
             reflected = (p_x <= min_like)
             normal = grad_p_x / torch.norm(grad_p_x, dim=1, keepdim=True)
-            #delta_velocity = 2 * torch.tensordot(velocity, normal, dims=([1], [1])) * normal
             normal = normal.to(dtype)
             delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
             delta_velocity_ref = 2 * torch.einsum('ai, ai -> a', velocity, v_ref).reshape(-1, 1) * v_ref
             velocity[reflected * ~box_reflected, :] -= delta_velocity[reflected * ~box_reflected, :]
             velocity[box_reflected * ~reflected, :] -= delta_velocity_ref[box_reflected * ~reflected, :]
-            #reflected = reflected + box_reflected
 
             num_reflections += reflected.clone()
             num_inside_steps += ~reflected.clone()
             if torch.min(num_reflections) > min_reflections:
                 pos_ls.append(x.clone())
                 logl_ls.append(p_x.clone())
-                #mask.append(~reflected)
                 mask.append(~reflected * in_prior)
-                a = 1 + 1
-
 
             # v_norm = torch.linalg.norm(velocity, dim=-1, keepdim=True)
             r = torch.randn_like(velocity[~reflected * ~box_reflected], dtype=dtype, device=self.device)
             r /= torch.linalg.norm(r, dim=-1, keepdim=True)
             velocity[~reflected * ~box_reflected] = velocity[~reflected * ~box_reflected] #* (1 + 5e-2 * r)
-            # velocity[~reflected] = velocity[~reflected] * (1 + 1e-2 * torch.randn_like(velocity[~reflected]))
-            # velocity[~reflected] = velocity[~reflected] / torch.linalg.norm(velocity[~reflected], dim=-1, keepdim=True) * v_norm[~reflected]
             n_out_steps += reflected.sum()
             n_in_steps += (~reflected).sum()
-            # n_out_steps += (reflected + ~in_prior).sum()
-            # n_in_steps += (~reflected * in_prior).sum()
 
         out_frac = n_out_steps / (n_out_steps + n_in_steps)
 
@@ -192,15 +204,9 @@ class DyGaliNest(DynamicNestedSampler):
             positions = torch.stack(pos_ls, dim=0)
             loglikes = torch.stack(logl_ls, dim=0)
             masks = torch.stack(mask, dim=0)
-            #idx = torch.randint(0, positions.shape[0] - 2, (position.shape[0],))
             pos_out = torch.zeros(position.shape, dtype=dtype, device=self.device)
             logl_out = torch.zeros(position.shape[0], dtype=dtype, device=self.device)
 
-        #print(positions.shape)
-        # if len(positions) == 0:
-        #     pos_out = torch.zeros_like(x)
-        #     logl_out = torch.tensor(1e-100, dtype=torch.float64)
-        # else:
             for i in range(positions.shape[1]):
                 pos = positions[:, i, :]
                 ll = loglikes[:, i]
@@ -274,11 +280,12 @@ class DyGaliNest(DynamicNestedSampler):
 
             assert (torch.min(x_ini - self._lower).item() >= 0) and (torch.max(x_ini - self._upper).item() <= 0)
 
-            new_x_active, new_loglike_active, out_frac = self.simulate_particle_in_box(position=x_ini[active],
+            new_x_active, new_loglike_active, out_frac = self.simulate_particle_in_box_v2(position=x_ini[active],
                                                                                        velocity=velocity[active],
                                                                                        min_like=min_loglike,
                                                                                        dt=self.dt,
-                                                                                       max_steps=100*self.nparams)
+                                                                                       #max_steps=100*self.nparams
+                                                                                          )
             new_x[active] = new_x_active.to(dtype)
             new_loglike[active] = new_loglike_active.to(dtype)
             #print("Accepted: ", torch.sum(new_loglike > min_loglike).item(), " / ", len(new_loglike))
@@ -293,7 +300,7 @@ class DyGaliNest(DynamicNestedSampler):
             in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
             active = (new_loglike < min_loglike) + (~in_prior)
 
-            assert torch.sum(~in_prior) == 0
+            #assert torch.sum(~in_prior) == 0
             accepted = torch.sum(active) == 0
             if not accepted:
                 if self.verbose: print(f"Active: {torch.sum(active).item()} / {len(active)}")
@@ -393,7 +400,7 @@ class DyGaliNest(DynamicNestedSampler):
 
 
 if __name__ == "__main__":
-    ndims = 32
+    ndims = 64
     mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
