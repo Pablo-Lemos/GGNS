@@ -2,7 +2,7 @@ import torch
 from numpy import bincount
 
 # Default floating point type
-dtype = torch.float64
+dtype = torch.float32
 
 class NestedSamplingSummaries:
     def __init__(self, device=None):

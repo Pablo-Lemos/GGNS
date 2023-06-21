@@ -13,8 +13,7 @@ from torchNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples
 
 # Default floating point type
-dtype = torch.float64
-
+dtype = torch.float32
 
 class NestedSampler:
         '''
@@ -95,6 +94,9 @@ class NestedSampler:
             self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
             self.n_accepted = 0
 
+            self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
+            self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
+
         def sample_prior(self, npoints, initial_step=False):
             ''' Produce samples from the prior distributions
             Parameters:
@@ -112,7 +114,7 @@ class NestedSampler:
             '''
 
             # Create an empty list for the samples
-            prior_samples = torch.zeros([npoints, self.nparams], device=self.device)
+            prior_samples = torch.zeros([npoints, self.nparams], dtype=dtype, device=self.device)
 
             # Iterate over all parameters
             for i, param in enumerate(self.params):
@@ -124,26 +126,34 @@ class NestedSampler:
                                                  high=param.prior[1],
                                                  size=npoints,
                                                  dtype=dtype)
-
-                elif param.prior_type == 'Gaussian':
-                    prior_samples[:,i] = torch.normal(mean=param.prior[0],
-                                                      std=param.prior[1],
-                                                      size=npoints,
-                                                      device=self.device)
+                # elif param.prior_type == 'Gaussian':
+                #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
+                #                                       std=param.prior[1],
+                #                                       size=npoints,
+                #                                       device=self.device)
+                else:
+                    raise ValueError('Prior type not recognised, only Uniform is implemented for now')
 
             # Calculate log likelihood
-            logL = torch.zeros(npoints, device=self.device)
+            logL = torch.zeros(npoints, dtype=dtype, device=self.device)
             for i, sample in enumerate(prior_samples):
                 logL[i] = self.loglike(sample)
 
             # Placeholder weights (will be calculated when the point is killed)
-            logweights = torch.zeros(len(logL), device=self.device)
+            logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
             points = NSPoints(self.nparams)
             points.add_samples(values=prior_samples, logweights=logweights, logL=logL)
 
             # Count likelihood evaluations
             self.like_evals += npoints
             return points
+
+        def is_in_prior(self, x):
+            assert len(x.shape) == 2
+            assert x.shape[1] == self.nparams
+            in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * (
+                        torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
+            return in_prior
 
         def get_score(self, theta):
             if theta.dim() == 1:
@@ -156,12 +166,24 @@ class NestedSampler:
             theta = theta.clone().detach().requires_grad_(True)
             loglike = self.loglike(theta)
 
+            # Calculate the score when the point is outside the prior range
+            v_low = torch.zeros_like(theta, dtype=dtype, device=self.device)
+            v_high = torch.zeros_like(theta, dtype=dtype, device=self.device)
+            v_low[theta < self._lower] = 1.
+            v_high[theta > self._upper] = -1.
+            #v_ref = v_low * (self._lower - theta) + v_high * (self._upper - theta)
+            v_ref = v_low + v_high
+            v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
+            in_prior = self.is_in_prior(theta)
+
             if self.given_score:
                 score = self.score(theta)
             else:
-                #loglike.backward()
-                #score = theta.grad
                 score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
+
+            with torch.no_grad():
+                score[~in_prior] = v_ref[~in_prior]
+
             if torch.isnan(score).any():
                 raise ValueError("Score is NaN for theta = {}".format(theta))
             return loglike, score

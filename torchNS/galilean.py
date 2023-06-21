@@ -27,12 +27,8 @@ class GaliNest(NestedSampler):
         self.n_accepted_pure_ns = 0
         self.acc_rate_pure_ns = 1
 
-        self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
-        self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
-        #assert p.prior_type == "uniform" for p in self.params, "Prior must be uniform for now"
-
     #@torch.compile
-    def simulate_particle_in_box(self, position, velocity, min_like, dt, num_steps):
+    def simulate_particle_in_box(self, position, velocity, min_like, dt, max_reflections):
         """
         Simulate the motion of a particle in a box with walls defined by the function p(X) = p0,
         where X is a three-vector (x, y, z), using PyTorch.
@@ -49,35 +45,47 @@ class GaliNest(NestedSampler):
             position_history (torch.Tensor): History of particle positions, shape (num_steps+1, 3).
         """
         assert(len(position.shape) == 2), "Position must be a 2D tensor"
-        for step in range(num_steps):
-            # reflected = False
+        n_reflections = 0
+        prev_reflection = torch.zeros_like(position, dtype=dtype, device=self.device)
+        new_reflection = torch.zeros_like(position, dtype=dtype, device=self.device)
+        positions = []
+        loglikes = []
+
+        while n_reflections < max_reflections:
             position += velocity * dt
-            # Slightly perturb the position to decorrelate the samples
-            # position *= (1 + 1e-2 * torch.randn_like(position))
             p_x, grad_p_x = self.get_score(position)
 
-            reflected = p_x <= min_like
-            #num_reflections += reflected
+            outside = (p_x <= min_like) + ~self.is_in_prior(position)
             normal = grad_p_x / torch.norm(grad_p_x, dim=-1)
-            delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
+            v_dot_normal = torch.einsum('ai, ai -> a', velocity, normal)
+            dealigned = v_dot_normal < 0
+            # Only reflect when the particle is outside the wall, and its velocity its pointed away from the normal
+            reflected = outside * dealigned
+            delta_velocity = 2 * v_dot_normal.reshape(-1, 1) * normal
             velocity[reflected, :] -= delta_velocity[reflected, :]
-            self.n_out_steps += reflected.sum()
-            self.n_in_steps += (~reflected).sum()
+            n_reflections += reflected.sum()
 
+            # prev_reflection[reflected, :] = new_reflection[reflected, :]
+            # new_reflection[reflected, :] = position[reflected, :]
 
-            # if p_x <= min_like:
-            #     # if reflected:
-            #     #     raise ValueError("Particle got stuck at the boundary")
-            #     # Reflect velocity using the normal vector of the wall
-            #     normal = grad_p_x / torch.norm(grad_p_x)
-            #     velocity -= 2 * torch.dot(velocity, normal) * normal
-            #     # reflected = True
-            #     self.n_out_steps += 1
-            # else:
-            #     # reflected = False
-            #     self.n_in_steps += 1
+            # self.n_out_steps += reflected.sum()
+            # self.n_in_steps += (~reflected).sum()
 
-        return position, p_x
+            if (n_reflections > max_reflections/2):
+                positions.append(position[~outside, :])
+                loglikes.append(p_x[~outside])
+
+        positions = torch.cat(positions, dim=0)
+        loglikes = torch.cat(loglikes, dim=0)
+        if positions.shape[0] == 0:
+            return position, -1e30 * torch.ones_like(p_x)
+        else:
+            # Select a position from the history of positions
+            idx = randint(0, positions.shape[0] - 1)
+            position = positions[idx, :]
+            p_x = loglikes[idx]
+
+            return position.unsqueeze(0), p_x
 
     def reflect_sampling(self, min_loglike):
         """
@@ -95,72 +103,28 @@ class GaliNest(NestedSampler):
         cluster_volumes = torch.exp(self.summaries.get_logXp())
         initial_point = self.live_points.get_random_sample(cluster_volumes)
         x = initial_point.get_values()
-        label = initial_point.get_labels()
-
-        # subset = self.live_points.label_subset(label)
-        # if subset.get_size() == 1:
-        #     alpha = 1.0
-        # else:
-        #     point = subset.get_random_sample(torch.ones(1))
-        #     while torch.allclose(point.values, x):
-        #         point = subset.get_random_sample(torch.ones(1))
-        #     alpha = torch.abs(x - point.get_values())**0.5
-
-        num_steps = self.n_repeats
-
-        #alpha = cluster_volumes[label]**(1/self.nparams)
-
-        log_gamma = torch.lgamma(torch.tensor(self.nparams / 2 + 1))
-        # Use the torch.exp function to compute the exponential of the log
-        gamma = torch.exp(log_gamma)
-        # Use the formula for the radius in terms of volume and dimension
-        alpha = (cluster_volumes[label] * gamma / pi ** (self.nparams / 2)) ** (1 / self.nparams)
-        alpha = 1.0
-        #print(alpha)
-        #alpha = self.get_score(x)[1] * 0.05
-        #print(alpha, cluster_volumes[label])
-        dt = 0.1
 
         accepted = False
         num_fails = 0
         while not accepted:
-            r = torch.randn_like(x)
-            velocity = alpha * r #/ torch.norm(r, dim=-1, keepdim=True)
+            r = torch.randn_like(x, dtype=dtype, device=self.device)
+            velocity = r / torch.linalg.norm(r, dim=-1, keepdim=True)
             new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike,
-                                                               dt=dt, num_steps=num_steps)
-            accepted = new_loglike > min_loglike[0]
+                                                               dt=self.dt, max_reflections=10)
 
-            #acceptance = self.n_in_steps / (self.n_out_steps + self.n_in_steps)
-            #if acceptance > 0.5:
-            #     self.dt = clip(1.1 * self.dt, 1e-5, 10.)
-            # elif acceptance < 0.2:
-            #     self.dt = clip(0.9 * self.dt, 1e-5, 10.)
+            #in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
+            in_prior = self.is_in_prior(new_x)
+            accepted = (new_loglike > min_loglike) * in_prior
 
             if not accepted:
                 num_fails += 1
-                #x = self.live_points.get_random_sample(self.cluster_volumes).get_values()
-                point = self.live_points.get_random_sample(cluster_volumes)
-                x = point.get_values()
-                label = point.get_labels()
+                initial_point = self.live_points.get_random_sample(cluster_volumes)
+                x = initial_point.get_values()
 
-                # Use the formula for the radius in terms of volume and dimension
-                # alpha = (cluster_volumes[label] * gamma / pi ** (self.nparams / 2)) ** (1 / self.nparams)
-
-                # subset = self.live_points.label_subset(label)
-                # if subset.get_size() == 1:
-                #     alpha = 1.0
-                # else:
-                #     point = subset.get_random_sample(torch.ones(1))
-                #     while torch.allclose(point.values, x):
-                #         point = subset.get_random_sample(torch.ones(1))
-                #     alpha = torch.abs(x - point.get_values())**0.5
-                #alpha = cluster_volumes[label]**(1/self.nparams)
-                #alpha = self.get_score(x)[1] * 0.05
-                #dt = dt*0.5
-
+        assert self.is_in_prior(new_x), "new_x = {}, lower = {}, upper = {}".format(new_x, self._lower, self._upper)
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
+        assert self.loglike(new_x) == new_loglike, "loglike = {}, new_loglike = {}".format(self.loglike(new_x), new_loglike)
 
-        #print(new_loglike, min_loglike[0])
         sample = NSPoints(self.nparams)
         sample.add_samples(values=new_x.reshape(1, -1),
                            logL=new_loglike.reshape(1),
@@ -203,23 +167,22 @@ class GaliNest(NestedSampler):
 
 
 if __name__ == "__main__":
-    ndims = 32
-    mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims),
+    ndims = 5
+    mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims, dtype=dtype),
                                                  covariance_matrix=torch.diag(
-                                                     0.2*torch.ones(ndims)))
+                                                     0.2*torch.ones(ndims, dtype=dtype)))
 
-    mvn2 = torch.distributions.MultivariateNormal(loc=-1*torch.ones(ndims),
+    mvn2 = torch.distributions.MultivariateNormal(loc=-1*torch.ones(ndims, dtype=dtype),
                                                  covariance_matrix=torch.diag(
-                                                     0.2*torch.ones(ndims)))
+                                                     0.2*torch.ones(ndims, dtype=dtype)))
 
     #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
     true_samples = mvn1.sample((5000,))
 
     def get_loglike(theta):
-        #lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))
         lp = mvn1.log_prob(theta)
-        mask = (torch.min(theta, dim=-1)[0] >= -5) * (torch.max(theta, dim=-1)[0] <= 5)
-        return lp  - 1e30 * (1 - mask.float())
+        #mask = (torch.min(theta, dim=-1)[0] >= -5) * (torch.max(theta, dim=-1)[0] <= 5)
+        return lp #- 1e30 * (1 - mask.float())
 
     params = []
 
@@ -236,7 +199,7 @@ if __name__ == "__main__":
         nlive=25*len(params),
         loglike=get_loglike,
         params=params,
-        clustering=True,
+        clustering=False,
         tol=1e-1
     )
 
@@ -247,9 +210,9 @@ if __name__ == "__main__":
     print('True logZ = ', np.log(1 / 10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
-    # from getdist import plots, MCSamples
-    # samples = ns.convert_to_getdist()
-    # true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
-    # g = plots.get_subplot_plotter()
-    # g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    # g.export('test_galilean.png')
+    from getdist import plots, MCSamples
+    samples = ns.convert_to_getdist()
+    true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
+    g = plots.get_subplot_plotter()
+    g.triangle_plot([true_samples, samples], [f'p{i}' for i in range(5)], filled=True, legend_labels=['True', 'GDNest'])
+    g.export('./plots/test_galilean.png')

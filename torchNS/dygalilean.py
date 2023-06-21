@@ -37,11 +37,6 @@ class DyGaliNest(DynamicNestedSampler):
         self.n_accepted_pure_ns = 0
         self.acc_rate_pure_ns = 1
 
-        self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
-        self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
-        #assert p.prior_type == "uniform" for p in self.params, "Prior must be uniform for now"
-
-
     def simulate_particle_in_box_v2(self, position, velocity, min_like, dt):
         assert(len(position.shape) == 2), "Position must be a 2D tensor"
         n_out_steps = 0
@@ -272,11 +267,6 @@ class DyGaliNest(DynamicNestedSampler):
             r = torch.randn_like(x_ini, dtype=dtype, device=self.device)
             r /= torch.linalg.norm(r, dim=-1, keepdim=True)
             velocity = alpha * r
-            #r = torch.randn_like(x)
-            #r /= torch.norm(r, dim=-1, keepdim=True)
-            #velocity = alpha.reshape(-1, 1) * r / torch.norm(r, dim=-1, keepdim=True)
-            #velocity = alpha * r
-            #print(active.shape, x[active].shape, velocity[active].shape)
 
             assert (torch.min(x_ini - self._lower).item() >= 0) and (torch.max(x_ini - self._upper).item() <= 0)
 

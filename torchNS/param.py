@@ -2,8 +2,7 @@ import torch
 from numpy.random import randint, choice
 
 # Default floating point type
-dtype = torch.float64
-
+dtype = torch.float32
 
 class Param():
     '''
