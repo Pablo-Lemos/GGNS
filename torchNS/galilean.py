@@ -8,7 +8,7 @@ from numpy import clip, pi
 dtype = torch.float32
 
 class GaliNest(NestedSampler):
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.5, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, clustering, verbose, device)
 
         self.acceptance_rate = 1.0
@@ -46,10 +46,11 @@ class GaliNest(NestedSampler):
         """
         assert(len(position.shape) == 2), "Position must be a 2D tensor"
         n_reflections = 0
-        prev_reflection = torch.zeros_like(position, dtype=dtype, device=self.device)
-        new_reflection = torch.zeros_like(position, dtype=dtype, device=self.device)
+        last_reflections = torch.zeros_like(position, dtype=dtype, device=self.device)
+        new_reflections = torch.zeros_like(position, dtype=dtype, device=self.device)
         positions = []
         loglikes = []
+        last_in = torch.ones(position.shape[0], dtype=torch.bool, device=self.device)
 
         while n_reflections < max_reflections:
             position += velocity * dt
@@ -65,27 +66,46 @@ class GaliNest(NestedSampler):
             velocity[reflected, :] -= delta_velocity[reflected, :]
             n_reflections += reflected.sum()
 
-            # prev_reflection[reflected, :] = new_reflection[reflected, :]
-            # new_reflection[reflected, :] = position[reflected, :]
+            last_reflections[last_in * reflected, :] = new_reflections[last_in * reflected, :]
+            new_reflections[last_in * reflected, :] = position[last_in * reflected, :]
+
+            last_in = ~outside
 
             # self.n_out_steps += reflected.sum()
             # self.n_in_steps += (~reflected).sum()
 
-            if (n_reflections > max_reflections/2):
-                positions.append(position[~outside, :])
-                loglikes.append(p_x[~outside])
+            # if (n_reflections > max_reflections/2):
+            #     positions.append(position[~outside, :])
+            #     loglikes.append(p_x[~outside])
 
-        positions = torch.cat(positions, dim=0)
-        loglikes = torch.cat(loglikes, dim=0)
-        if positions.shape[0] == 0:
+        # positions = torch.cat(positions, dim=0)
+        # loglikes = torch.cat(loglikes, dim=0)
+        # if positions.shape[0] == 0:
+        #     return position, -1e30 * torch.ones_like(p_x)
+        # else:
+        #     # Select a position from the history of positions
+        #     idx = randint(0, positions.shape[0] - 1)
+        #     position = positions[idx, :]
+        #     p_x = loglikes[idx]
+        #
+        #     return position.unsqueeze(0), p_x
+        if torch.any(last_reflections) == 0:
             return position, -1e30 * torch.ones_like(p_x)
         else:
-            # Select a position from the history of positions
-            idx = randint(0, positions.shape[0] - 1)
-            position = positions[idx, :]
-            p_x = loglikes[idx]
+            segments = new_reflections - last_reflections
 
-            return position.unsqueeze(0), p_x
+            # Generate random values between 0 and 1
+            random_values = torch.rand((position.shape[0], 1))
+
+            # Multiply the line segments by the random values
+            # to get the points along the segments
+            pos_out = last_reflections + random_values * segments
+            logl_out, _ = self.get_score(pos_out)
+            mask2 = logl_out < min_like
+
+            logl_out[mask2] = -1e30
+
+            return pos_out, logl_out#, out_frac
 
     def reflect_sampling(self, min_loglike):
         """
@@ -110,7 +130,7 @@ class GaliNest(NestedSampler):
             r = torch.randn_like(x, dtype=dtype, device=self.device)
             velocity = r / torch.linalg.norm(r, dim=-1, keepdim=True)
             new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike,
-                                                               dt=self.dt, max_reflections=10)
+                                                               dt=self.dt, max_reflections=5)
 
             #in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
             in_prior = self.is_in_prior(new_x)
@@ -168,7 +188,7 @@ class GaliNest(NestedSampler):
 
 if __name__ == "__main__":
     ndims = 5
-    mvn1 = torch.distributions.MultivariateNormal(loc=2*torch.ones(ndims, dtype=dtype),
+    mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims, dtype=dtype),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims, dtype=dtype)))
 
@@ -200,7 +220,7 @@ if __name__ == "__main__":
         loglike=get_loglike,
         params=params,
         clustering=False,
-        tol=1e-1
+        tol=1e-2
     )
 
     ns.run()
