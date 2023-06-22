@@ -5,17 +5,33 @@ from numpy import bincount
 dtype = torch.float64
 
 class NestedSamplingSummaries:
+    """
+    A class to represent the summaries used in nested sampling
+    """
     def __init__(self, device=None):
+        """
+
+        Parameters
+        ----------
+        device : torch.device, optional
+            Device to use for the summaries. The default is None, in which case
+            the device is set to 'cuda' if available, otherwise 'cpu'.
+        """
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+
+        self.n_clusters = 1
 
         log_minus_inf = torch.log(torch.as_tensor(1e-1000, device=self.device))
 
         self.logZ = log_minus_inf.clone()
-        self.logX = torch.as_tensor(0., device=self.device)
-        self.logX2 = torch.as_tensor(0., device=self.device)
+        self.logZp = log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device)
+        self.logXp = torch.zeros(self.n_clusters, device=self.device)
 
         self.logZ2 = log_minus_inf.clone()
-        self.logZX = log_minus_inf.clone()
+        self.logZp2 = log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device)
+        self.logZXp = log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device)
+        self.logZpXp = log_minus_inf.clone() * torch.ones(self.n_clusters, device=self.device)
+        self.logXpXq = torch.log(torch.eye(self.n_clusters, device=self.device) + 1e-1000)
 
         # Create tensors to store killed clusters
         # Empty 1D tensor
@@ -23,54 +39,156 @@ class NestedSamplingSummaries:
         self.dead_logXp = torch.empty(0, device=self.device)
 
     def get_logZ(self):
+        """
+        Returns the current value of logZ
+        Returns
+        -------
+        logZ : torch.Tensor
+            Current value of logZ
+        """
         return self.logZ
 
     def get_logZp(self):
-        return self.logZ
+        """
+        Returns the current value of logZp
+        Returns
+        -------
+        logZp : torch.Tensor
+            Current value of logZp
+
+        """
+        return self.logZp
 
     def get_logXp(self):
-        return self.logX.unsqueeze(0)
+        """
+        Returns the current value of logXp
+        Returns
+        -------
+        logXp : torch.Tensor
+            Current value of logXp
+        """
+        return self.logXp
 
     def get_mean_logZ(self):
-        logZ = 2 * self.logZ - 0.5 * self.logZ2
-        #logZ = self.logZ
-        return logZ
+        """
+        Returns the current value of the mean of logZ
+        Returns
+        -------
+        mean_logZ : torch.Tensor
+            Current value of the mean of logZ
+        """
+        mean_logZ = 2 * self.logZ - 0.5 * self.logZ2
+        return mean_logZ
 
     def get_var_logZ(self):
+        """
+        Returns the current value of the variance of logZ
+        Returns
+        -------
+        var_logZ : torch.Tensor
+            Current value of the variance of logZ
+        """
         var_logZ = self.logZ2 - 2 * self.logZ
-        #var_logZ = self.logZ2 - self.logZ**2
         return var_logZ
 
     def update(self, logL, label, np):
-        np = torch.as_tensor(np, dtype=dtype, device=self.device)
+        """
+        Update the summaries
+        Parameters
+        ----------
+        logL : torch.Tensor
+            Log likelihood
+        label : torch.Tensor
+            Label of the cluster
+        np : torch.Tensor
+            Number of points in the cluster
 
+        Returns
+        -------
+        """
+        np = torch.as_tensor(np, dtype=torch.float64, device=self.device)
         # log Z
         self.logZ = torch.logsumexp(torch.cat([self.logZ.reshape(1),
-                                               logL + self.logX -
+                                               logL + self.logXp[label] -
                                                torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
 
+        # log Zp
+        self.logZp[label] = torch.logsumexp(torch.cat([self.logZp[label].reshape(1),
+                                                       logL + self.logXp[label] -
+                                                       torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
 
         # log Z2
         self.logZ2 = torch.logsumexp(torch.cat([self.logZ2.reshape(1),
-                                                self.logZX + logL + torch.log(
+                                                self.logZXp[label] + logL + torch.log(
                                                         torch.as_tensor(2. / (np + 1.), device=self.device)),
-                                                self.logX2 + 2 * logL + torch.log(
-                                                       torch.as_tensor(1. / (np + 1.) / (np + 2.), device=self.device))
+                                                self.logXpXq[label, label] + 2 * logL + torch.log(
+                                                        torch.as_tensor(2. / (np + 1.) / (np + 2.), device=self.device))
                                                 ]), 0)
 
+        # log Zp^2
+        self.logZp2[label] = torch.logsumexp(torch.cat([self.logZp2[label].reshape(1),
+                                                        self.logZpXp[label] + logL + torch.log(
+                                                               torch.as_tensor(2. / (np + 1.), device=self.device)),
+                                                        self.logXpXq[label, label] + 2 * logL + torch.log(
+                                                               torch.as_tensor(2. / (np + 1.) / (np + 2.),
+                                                                               device=self.device))
+                                                        ]), 0)
+
         # log ZXp
-        self.logZX = torch.logsumexp(
-            torch.cat([self.logZX.reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
-                       self.logX2 + logL + torch.log(
+        self.logZXp[label] = torch.logsumexp(
+            torch.cat([self.logZXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
+                       self.logXpXq[label, label] + logL + torch.log(
                            torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
                        ]), 0)
 
-        # log Xp
-        self.logX = self.logX + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
+        # log ZXq
+        for l in range(self.n_clusters):
+            if l != label:
+                self.logZXp[l] = torch.logsumexp(torch.cat([self.logZXp[l].reshape(1),
+                                                            self.logXpXq[label, l] + logL - torch.log(
+                                                                   torch.as_tensor((np + 1.), device=self.device))
+                                                               ]), 0)
 
-        self.logX2 = self.logX2 + torch.log(torch.as_tensor(np / (np + 2.), device=self.device))
+
+        # log ZpXp
+        self.logZpXp[label] = torch.logsumexp(
+            torch.cat([self.logZpXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
+                       self.logXpXq[label, label] + logL + torch.log(
+                           torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
+                       ]), 0)
+
+        #assert torch.allclose(self.logZ, torch.logsumexp(self.logZp, 0)), f'{self.logZ} != {torch.logsumexp(self.logZp, 0)}'
+        # if not torch.allclose(torch.logsumexp(self.logZp, 0), self.logZ):
+        #     raise ValueError("logZp does not sum to logZ")
+
+        # log Xp
+        self.logXp[label] = self.logXp[label] + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
+
+        # log Xp^2
+        self.logXpXq[label, label] = self.logXpXq[label, label] + torch.log(
+            torch.as_tensor(np / (np + 2.), device=self.device))
+
+        # log XpXq
+        for l in range(self.n_clusters):
+            if l != label:
+                self.logXpXq[label, l] = self.logXpXq[label, l] + torch.log(
+                    torch.as_tensor(np / (np + 1.), device=self.device))
+
+                self.logXpXq[l, label] = self.logXpXq[label, l].clone()
 
     def split(self, cluster, labels):
+        """
+        Split a cluster into two clusters
+        Parameters
+        ----------
+        cluster : int
+            Cluster to split
+        labels : torch.Tensor
+            Labels of the points
+
+        Returns
+        -------
+        """
         n = len(labels)
         ns = bincount(labels)
         log_minus_inf = torch.log(torch.as_tensor(1e-1000, device=self.device))
@@ -135,6 +253,16 @@ class NestedSamplingSummaries:
         return new_labels
 
     def kill_cluster(self, idx):
+        """
+        Kill a cluster
+        Parameters
+        ----------
+        idx : int
+            Index of the cluster to kill
+
+        Returns
+        -------
+        """
         self.dead_logZp = torch.cat([self.dead_logZp, self.logZp[idx].unsqueeze(0)])
         self.dead_logXp = torch.cat([self.dead_logXp, self.logXp[idx].unsqueeze(0)])
 
