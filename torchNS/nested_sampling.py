@@ -16,518 +16,489 @@ from getdist import MCSamples
 dtype = torch.float64
 
 class NestedSampler:
-        '''
-        The nested sampler class
-        Attributes
+    """
+    Nested Sampling class
+    """
+    def __init__(
+            self, loglike, params, nlive=50, tol=0.1, clustering=False, verbose=True, device=None):
+        """
+        Parameters
         ----------
         loglike: function
           The logarithm of the likelihood function
         params: ls[params]
-          A list contatining all parameters, the elements belong to the parameter
+          A list containing all parameters, the elements belong to the parameter
           class
         nlive : int
-          The number of live points. Should be set to ~25*nparams
+          The number of live points. Should be set to ~25*nparams. Defaults to 50
         tol: float
-          The tolerance, which decides the stopping of the algorithm
-        max_nsteps: int
-          The maximum number of steps to be used before stopping if the target
-          tolerance is not achieved
-        nparams: int
-          The number of parameters
-        paramnames : ls[str]
-          A list containing the names of each parameter
-        paramlabels : ls[str]
-          A list containing the labels of each parameter
-        dead_points: pd.DataFrame
-          A pandas dataframe containing all the dead points
-        live_points: pd.DataFrame
-          A pandas dataframe containing all the live points
-        like_evals: int
-          The number of likelihood evaluations
-        Methods
+          The tolerance, which decides the stopping of the algorithm. Defaults to
+          0.1
+        clustering: bool
+            A boolean indicating if clustering should be used. Defaults to False
+
+        verbose: bool
+            A boolean indicating if the algorithm should print information as it runs
+        """
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+
+        self.loglike = loglike
+        self.params = params
+        self.nlive_ini = nlive
+        self.tol = tol
+
+        self.nparams = len(params)
+        self.paramnames = []
+        self.paramlabels = []
+        self.dead_points = NSPoints(self.nparams)
+        self.live_points = NSPoints(self.nparams)
+        self.like_evals = 0
+        self.verbose = verbose
+        self.clustering = clustering
+        self.n_clusters = 1
+        self.summaries = NestedSamplingSummaries(device=self.device)
+        self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
+        self.n_accepted = 0
+
+        self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
+        self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
+
+    def sample_prior(self, npoints, initial_step=False):
+        """ Produce samples from the prior distributions
+        Parameters:
+        -----------
+        npoints : int
+          The number of samples to be produced
+        initial_step : bool
+          A boolean indicating if this is the initial sampling step. Defaults to
+          False
+        Returns:
+        samples: pd.Dataframe
+          A pandas dataframe containing the values of the parameters and the
+          corresponding log likelihood, prior probability, and log posterior. The
+          weights are set to unity, as they are calculated in a separate function
+        """
+
+        # Create an empty list for the samples
+        prior_samples = torch.zeros([npoints, self.nparams], dtype=dtype, device=self.device)
+
+        # Iterate over all parameters
+        for i, param in enumerate(self.params):
+            if initial_step == True:
+                self.paramnames.append(param.name)
+                self.paramlabels.append(param.label)
+            if param.prior_type == 'Uniform':
+                prior_samples[:,i] = uniform(low=param.prior[0],
+                                             high=param.prior[1],
+                                             size=npoints,
+                                             dtype=dtype)
+            # elif param.prior_type == 'Gaussian':
+            #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
+            #                                       std=param.prior[1],
+            #                                       size=npoints,
+            #                                       device=self.device)
+            else:
+                raise ValueError('Prior type not recognised, only Uniform is implemented for now')
+
+        # Calculate log likelihood
+        logL = torch.zeros(npoints, dtype=dtype, device=self.device)
+        for i, sample in enumerate(prior_samples):
+            logL[i] = self.loglike(sample)
+
+        # Placeholder weights (will be calculated when the point is killed)
+        logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
+        points = NSPoints(self.nparams)
+        points.add_samples(values=prior_samples, logweights=logweights, logL=logL)
+
+        # Count likelihood evaluations
+        self.like_evals += npoints
+        return points
+
+    def is_in_prior(self, x):
+        """ Check if a point is in the prior
+        Parameters:
+        -----------
+        x: torch.tensor
+            A 1D or 2D tensor containing the parameter values
+        Returns:
+        --------
+        in_prior: torch.tensor
+            A boolean tensor indicating if the point is in the prior
+        """
+        assert len(x.shape) == 2
+        assert x.shape[1] == self.nparams
+        in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * \
+                   (torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
+        return in_prior
+
+    def get_score(self, theta):
+        """ Calculate the score for a given point
+        Parameters:
+        -----------
+        theta: torch.tensor
+            A 1D or 2D tensor containing the parameter values
+        Returns:
+        --------
+        score: torch.tensor
+            A tensor containing the score for each point
+        """
+        if theta.dim() == 1:
+            self.like_evals += 1
+            theta = theta.unsqueeze(0)
+        elif theta.dim() == 2:
+            self.like_evals += theta.shape[0]
+        else:
+            raise ValueError("theta must be 1 or 2 dimensional")
+        theta = theta.clone().detach().requires_grad_(True)
+        loglike = self.loglike(theta)
+
+        # Calculate the score when the point is outside the prior range
+        v_low = torch.zeros_like(theta, dtype=dtype, device=self.device)
+        v_high = torch.zeros_like(theta, dtype=dtype, device=self.device)
+        v_low[theta < self._lower] = 1.
+        v_high[theta > self._upper] = -1.
+
+        v_ref = v_low + v_high
+        v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
+        in_prior = self.is_in_prior(theta)
+
+        if self.given_score:
+            score = self.score(theta)
+        else:
+            score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
+
+        with torch.no_grad():
+            score[~in_prior] = v_ref[~in_prior]
+
+        if torch.isnan(score).any():
+            raise ValueError("Score is NaN for theta = {}".format(theta))
+        return loglike, score
+
+    def get_like_evals(self):
+        """ Return the number of likelihood evaluations
+        Returns
         -------
-        sample_prior(npoints, initial_step)
-          Produce samples from the prior distribution
-        '''
+        like_evals : int
+            The number of likelihood evaluations
+        """
+        return self.like_evals
 
-        def __init__(
-                self, loglike, params, nlive=50, tol=0.1, max_nsteps=1000000, clustering=False, verbose=True, device=None):
+    def get_weight(self, sample):
+        """ Calculate the weight at a given iteration, calculated as the number of dead points
 
-            '''
-            Parameters
-            ----------
-            loglike: function
-              The logarithm of the likelihood function
-            params: ls[params]
-              A list contatining all parameters, the elements belong to the parameter
-              class
-            nlive : int
-              The number of live points. Should be set to ~25*nparams. Defaults to 50
-            tol: float
-              The tolerance, which decides the stopping of the algorithm. Defaults to
-              0.1
-            max_nsteps: int
-              The maximum number of steps to be used before stopping if the target
-              tolerance is not achieved. Defaults to 10,000
-            verbose: bool
-                A boolean indicating if the algorithm should print information as it runs
-            '''
+        Parameters
+        ----------
+        sample : NSPoint
+            The point to calculate the weight for
 
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+        Returns
+        -------
+        weight : float
+            The weight of the point
+        """
 
-            self.loglike = loglike
-            self.params = params
-            self.nlive_ini = nlive
-            self.tol = tol
-            self.max_nsteps = max_nsteps
+        label = sample.get_labels().item()
+        try:
+            n_p = self.live_points.count_labels()[label]
+        except IndexError:
+            n_p = 0
+        logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p + 1, device=self.device))
+        weight = torch.exp(logweight)
+        return weight
 
-            self.nparams = len(params)
-            self.paramnames = []
-            self.paramlabels = []
-            self.dead_points = NSPoints(self.nparams)
-            self.live_points = NSPoints(self.nparams)
-            self.like_evals = 0
-            self.verbose = verbose
-            self.clustering = clustering
-            self.n_clusters = 1
-            self.summaries = NestedSamplingSummaries(device=self.device)
-            self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
-            self.n_accepted = 0
+    def get_nlive(self):
+        """ Return the number of live points
+        Returns
+        -------
+        nlive : int
+            The number of live points
+        """
+        return self.live_points.get_size()
 
-            self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
-            self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
+    def _get_epsilon(self):
+        """ Find the maximum contribution to the evidence from the livepoints,
+        used for the stopping criterion
+        Returns
+        -------
+        delta_logZ : float
+          The maximum contribution to the evidence from the live points
+        """
 
-        def sample_prior(self, npoints, initial_step=False):
-            ''' Produce samples from the prior distributions
-            Parameters:
-            -----------
-            npoints : int
-              The number of samples to be produced
-            initial_step : bool
-              A boolean indicating if this is the initial sampling step. Defaults to
-              False
-            Returns:
-            samples: pd.Dataframe
-              A pandas dataframe containing the values of the parameters and the
-              corresponding log likelihood, prior probability, and log posterior. The
-              weights are set to unity, as they are calculated in a separate function
-            '''
+        if not self.clustering:
+            # Find index with mean likelihood
+            mean_logL = torch.mean(self.live_points.get_logL())
 
-            # Create an empty list for the samples
-            prior_samples = torch.zeros([npoints, self.nparams], dtype=dtype, device=self.device)
+            logXi = self.summaries.get_logXp()
 
-            # Iterate over all parameters
-            for i, param in enumerate(self.params):
-                if initial_step == True:
-                    self.paramnames.append(param.name)
-                    self.paramlabels.append(param.label)
-                if param.prior_type == 'Uniform':
-                    prior_samples[:,i] = uniform(low=param.prior[0],
-                                                 high=param.prior[1],
-                                                 size=npoints,
-                                                 dtype=dtype)
-                # elif param.prior_type == 'Gaussian':
-                #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
-                #                                       std=param.prior[1],
-                #                                       size=npoints,
-                #                                       device=self.device)
-                else:
-                    raise ValueError('Prior type not recognised, only Uniform is implemented for now')
+            # Get delta_logZ as log(Xi*L)
+            delta_logZ = logXi + mean_logL
 
-            # Calculate log likelihood
-            logL = torch.zeros(npoints, dtype=dtype, device=self.device)
-            for i, sample in enumerate(prior_samples):
-                logL[i] = self.loglike(sample)
+            epsilon = torch.exp(delta_logZ - self.summaries.get_logZ())
 
-            # Placeholder weights (will be calculated when the point is killed)
-            logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
-            points = NSPoints(self.nparams)
-            points.add_samples(values=prior_samples, logweights=logweights, logL=logL)
+        else:
+            delta_logZ = torch.zeros(self.n_clusters, device=self.device)
+            for i in range(self.n_clusters):
+                # Select points in cluster
+                cluster_points = self.live_points.get_cluster(i)
 
-            # Count likelihood evaluations
-            self.like_evals += npoints
-            return points
+                if cluster_points.get_size() == 0:
+                    delta_logZ[i] = -torch.inf
+                    continue
 
-        def is_in_prior(self, x):
-            assert len(x.shape) == 2
-            assert x.shape[1] == self.nparams
-            in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * (
-                        torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
-            return in_prior
-
-        def get_score(self, theta):
-            if theta.dim() == 1:
-                self.like_evals += 1
-                theta = theta.unsqueeze(0)
-            elif theta.dim() == 2:
-                self.like_evals += theta.shape[0]
-            else:
-                raise ValueError("theta must be 1 or 2 dimensional")
-            theta = theta.clone().detach().requires_grad_(True)
-            loglike = self.loglike(theta)
-
-            # Calculate the score when the point is outside the prior range
-            v_low = torch.zeros_like(theta, dtype=dtype, device=self.device)
-            v_high = torch.zeros_like(theta, dtype=dtype, device=self.device)
-            v_low[theta < self._lower] = 1.
-            v_high[theta > self._upper] = -1.
-            #v_ref = v_low * (self._lower - theta) + v_high * (self._upper - theta)
-            v_ref = v_low + v_high
-            v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
-            in_prior = self.is_in_prior(theta)
-
-            if self.given_score:
-                score = self.score(theta)
-            else:
-                score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
-
-            with torch.no_grad():
-                score[~in_prior] = v_ref[~in_prior]
-
-            if torch.isnan(score).any():
-                raise ValueError("Score is NaN for theta = {}".format(theta))
-            return loglike, score
-
-        def get_like_evals(self):
-            return self.like_evals
-
-        def get_prior_volume(self, i):
-            ''' Calculate the prior volume for a given sample
-            Parameters
-            ----------
-            i : int
-              The current iteration
-
-            Returns
-            -------
-            Xi : float
-              The corresponding prior volume
-            '''
-
-            Xi = torch.exp(-i / torch.tensor(self.get_nlive(), dtype=dtype, device=self.device))
-            return Xi
-
-        def get_weight(self, sample):
-            ''' Calculate the weight at a given iteration, calculated as the number of
-            dead points
-
-            Returns
-            -------
-            weight : float
-              The sample weight
-            '''
-
-            # iteration = self.dead_points.get_size()
-            # X_plus = self.get_prior_volume(iteration + 2)
-            # X_minus = self.get_prior_volume(iteration)
-            # weight_old = 0.5 * (X_minus - X_plus)
-            label = sample.get_labels().item()
-            # n_p = self.live_points.count_labels()[label]
-            try:
-                n_p = self.live_points.count_labels()[label]
-            except IndexError:
-                n_p = 0
-            logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p + 1, device=self.device))
-            #logweight = self.summaries.get_logX() - torch.log(torch.as_tensor(self.live_points.get_size() + 1, device=self.device))
-            weight = torch.exp(logweight)
-            # print('weight', weight, 'weight_old', weight_old)
-            return weight
-
-        def get_nlive(self):
-            ''' Return the number of live points
-            '''
-            return self.live_points.get_size()
-
-        def _get_epsilon(self):
-            ''' Find the maximum contribution to the evidence from the livepoints,
-            used for the stopping criterion
-            Returns
-            -------
-            delta_logZ : float
-              The maximum contribution to the evidence from the live points
-            '''
-
-            if not self.clustering:
                 # Find index with mean likelihood
-                mean_logL = torch.mean(self.live_points.get_logL())
+                mean_logL = torch.mean(cluster_points.get_logL())
 
-                logXi = self.summaries.get_logXp()
+                logXi = self.summaries.get_logXp()[i]
 
                 # Get delta_logZ as log(Xi*L)
-                delta_logZ = logXi + mean_logL
+                delta_logZ[i] = logXi + mean_logL
 
-                epsilon = torch.exp(delta_logZ - self.summaries.get_logZ())
+            epsilon = torch.exp(delta_logZ - self.summaries.get_logZp())
 
-            else:
-                delta_logZ = torch.zeros(self.n_clusters, device=self.device)
-                for i in range(self.n_clusters):
-                    # Select points in cluster
-                    cluster_points = self.live_points.get_cluster(i)
+        return epsilon
 
-                    if cluster_points.get_size() == 0:
-                        delta_logZ[i] = -torch.inf
-                        continue
+    def find_new_sample(self, min_like):
+        """ Sample the prior until finding a sample with higher likelihood than a
+        given value
+        Parameters
+        ----------
+          min_like : float
+            The threshold log-likelihood
+        Returns
+        -------
+          newsample : pd.DataFrame
+            A new sample
+        """
 
-                    # Find index with mean likelihood
-                    mean_logL = torch.mean(cluster_points.get_logL())
+        newlike = -torch.inf
+        while newlike < min_like:
+            newsample = self.sample_prior(npoints=1)
+            newlike = newsample.get_logL()[0]
 
-                    logXi = self.summaries.get_logXp()[i]
+        return newsample
 
-                    # Get delta_logZ as log(Xi*L)
-                    delta_logZ[i] = logXi + mean_logL
-
-                epsilon = torch.exp(delta_logZ - self.summaries.get_logZp())
-
-            return epsilon
-
-        def find_new_sample(self, min_like):
-            ''' Sample the prior until finding a sample with higher likelihood than a
-            given value
-            Parameters
-            ----------
-              min_like : float
-                The threshold log-likelihood
-            Returns
-            -------
-              newsample : pd.DataFrame
-                A new sample
-            '''
-
-            newlike = -torch.inf
-            while newlike < min_like:
-                newsample = self.sample_prior(npoints=1)
-                newlike = newsample.get_logL()[0]
-
-            return newsample
-
-        def find_clusters(self):
-            ''' Run a clustering algorithm to find how many clusters are present in the posterior'''
-            # x = self.live_points.get_values()
-            # n_clusters, labels = gmm_bic(x, max_components=self.get_nlive()//2)
-            #
-            # self.live_points.set_labels(labels)
-            # #self.cluster_volumes = self.live_points.count_labels()/self.get_nlive() * torch.exp(self.summaries[3])
-            # self.cluster_volumes = torch.exp(self.summaries[2])
-
-            for i in range(self.n_clusters):
-                all_labels = self.live_points.get_labels().detach().numpy()
-                #x = self.live_points.get_values()[self.live_points.get_labels() == i]
-                x = self.live_points.get_cluster(i).get_values()
-                if x.shape[0] < self.nlive_ini//self.nparams:
-                    continue
-                #_, labels = gmm_bic(x, max_components=x.shape[0]//2)
-                n_clusters, labels = get_knn_clusters(x, max_components=x.shape[0]//2)
-                if n_clusters > 1:
-                    new_labels = self.summaries.split(i, labels)
-                    all_labels[all_labels == i] = new_labels.clone()
-                    self.n_clusters = self.summaries.n_clusters
-                    self.live_points.set_labels(all_labels)
-
-
-        def get_cluster_live_points(self, label):
-            return self.live_points.count_labels()[label]
-
-        def kill_point(self, idx=None):
-            if idx is None:
-                sample = self.live_points.pop()
-            else:
-                #assert idx < self.live_points.get_size()
-                sample = self.live_points.pop_by_index(idx)
-
-            # if sample is None:
-            #     return None
-
-            # Update the summaries
-            label = sample.get_labels().item()
-            try:
-                n_p = self.live_points.count_labels()[label]
-                kill_cluster = False
-            except IndexError:
-                n_p = 0
-                kill_cluster = True
-
-            # Add one, as we have already removed the point
-            n_p = n_p + 1
-            self.summaries.update(sample.get_logL(), label, n_p)
-
-            #sample.weights = self.get_weight(sample)*torch.ones_like(sample.weights, device=self.device)
-            logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p, device=self.device))
-            sample.logweights = logweight * torch.ones_like(sample.logweights, device=self.device)
-            self.dead_points.add_nspoint(sample)
-
-            if kill_cluster:
-                self.live_points.labels[self.live_points.labels > label] -= 1
-                self.summaries.kill_cluster(label)
+    def find_clusters(self):
+        """ Run a clustering algorithm to find how many clusters are present in the posterior
+        """
+        for i in range(self.n_clusters):
+            all_labels = self.live_points.get_labels().detach().numpy()
+            x = self.live_points.get_cluster(i).get_values()
+            if x.shape[0] < self.nlive_ini//self.nparams:
+                continue
+            n_clusters, labels = get_knn_clusters(x, max_components=x.shape[0]//2)
+            if n_clusters > 1:
+                new_labels = self.summaries.split(i, labels)
+                all_labels[all_labels == i] = new_labels.clone()
                 self.n_clusters = self.summaries.n_clusters
+                self.live_points.set_labels(all_labels)
 
-            return sample
+    def kill_point(self, idx=None):
+        """
+        Kill a point, removing it from the live points and updating the summaries
+        Parameters
+        ----------
+        idx
+            The index of the point to kill
 
-        def add_point(self, min_logL):
-            # Add a new sample
-            newsample = self.find_new_sample(min_logL)
-            assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
+        Returns
+        -------
+        sample : NSPoint
+            The point that was killed
+        """
+        if idx is None:
+            sample = self.live_points.pop()
+        else:
+            sample = self.live_points.pop_by_index(idx)
 
-            if self.clustering:
-                # Find closest point to new sample
-                values = self.live_points.get_values()
-                dist = torch.sum((values - newsample.get_values())**2, dim=1)
-                idx = torch.argmin(dist)
+        # Update the summaries
+        label = sample.get_labels().item()
+        try:
+            n_p = self.live_points.count_labels()[label]
+            kill_cluster = False
+        except IndexError:
+            n_p = 0
+            kill_cluster = True
 
-                # Assign its label to the new point
-                newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
-            self.live_points.add_nspoint(newsample)
-            self.n_accepted += 1
+        # Add one, as we have already removed the point
+        n_p = n_p + 1
+        self.summaries.update(sample.get_logL(), label, n_p)
 
-        def move_one_step(self):
-            ''' Find highest log like, get rid of that point, and sample a new one '''
-            sample = self.kill_point()
-            self.add_point(min_logL=sample.get_logL())
+        logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p, device=self.device))
+        sample.logweights = logweight * torch.ones_like(sample.logweights, device=self.device)
+        self.dead_points.add_nspoint(sample)
 
-        def _collect_priors(self):
-            """
-            Collect the prior ranges for each parameter
-            :return: array of shape (n_params, 2)
-            """
-            prior_array = torch.zeros([self.nparams, 2], device=self.device)
-            for i, param in enumerate(self.params):
-                assert param.get_prior_type() == 'Uniform', "Only Uniform priors accepted for now"
-                prior_array[i] = torch.tensor(param.get_prior(), device=self.device)
+        if kill_cluster:
+            self.live_points.labels[self.live_points.labels > label] -= 1
+            self.summaries.kill_cluster(label)
+            self.n_clusters = self.summaries.n_clusters
 
-            return prior_array
+        return sample
 
-        def get_mean_logZ(self):
-            return self.summaries.get_mean_logZ()
+    def add_point(self, min_logL):
+        """
+        Add a new point to the live points, sampling from the prior until finding a point with higher likelihood
+        than a given value
+        Parameters
+        ----------
+        min_logL
+            The minimum log-likelihood of the new point
 
-        def get_var_logZ(self):
-            return self.summaries.get_var_logZ()
+        Returns
+        -------
+        """
+        # Add a new sample
+        newsample = self.find_new_sample(min_logL)
+        assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
 
-        def terminate(self, run_time):
-            ''' Terminates the algorithm by adding the final live points to the dead
-            points, calculating the final log evidence and acceptance rate, and printing
-            a message
-            Parameters
-            ----------
-            run_time: float
-              The time taken for the algorithm to finish, in seconds
-            '''
+        if self.clustering:
+            # Find closest point to new sample
+            values = self.live_points.get_values()
+            dist = torch.sum((values - newsample.get_values())**2, dim=1)
+            idx = torch.argmin(dist)
 
-            # weights_live = self.get_weight()
-            # self.live_points.weights = weights_live*torch.ones_like(
-            #     self.live_points.get_weights(), device=self.device)
-            #
-            # self.dead_points.add_nspoint(self.live_points)
-            #
-            # # Add the contribution from the live points to the evidence
-            # self.add_logZ_live()
-            #
+            # Assign its label to the new point
+            newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
+        self.live_points.add_nspoint(newsample)
+        self.n_accepted += 1
 
-            for _ in range(self.get_nlive()-1):
-                self.kill_point()
+    def move_one_step(self):
+        """ Find highest log like, get rid of that point, and sample a new one """
+        sample = self.kill_point()
+        self.add_point(min_logL=sample.get_logL())
 
-            # Convert the prior weights to posterior weights
-            # self.dead_points.weights *= torch.exp(
-            #     self.dead_points.get_logL() - self.summaries.get_logZ())
-            log_weights = self.dead_points.get_log_weights() + self.dead_points.get_logL() - self.summaries.get_logZ()
-            self.dead_points.logweights = log_weights
+    def get_mean_logZ(self):
+        """ Return the mean log evidence
+        Returns
+        -------
+        mean_logZ : float
+            The mean log evidence
+        """
+        return self.summaries.get_mean_logZ()
 
-            acc_rate = self.dead_points.get_size() / float(self.like_evals)
+    def get_var_logZ(self):
+        """ Return the variance of the log evidence
+        Returns
+        -------
+        var_logZ : float
+            The variance of the log evidence
+        """
+        return self.summaries.get_var_logZ()
 
-            if self.verbose:
-                print('---------------------------------------------')
-                print('Nested Sampling completed')
-                print('Run time =', run_time, 'seconds')
-                print('Acceptance rate =', acc_rate)
-                print('Number of likelihood evaluations =', self.like_evals)
-                print(f'logZ = {self.summaries.get_mean_logZ().item() :.4f} +/- {self.summaries.get_var_logZ().item()**0.5 :.4f}')
-                print('---------------------------------------------')
+    def terminate(self, run_time):
+        """ Terminates the algorithm by adding the final live points to the dead
+        points, calculating the final log evidence and acceptance rate, and printing
+        a message
+        Parameters
+        ----------
+        run_time: float
+          The time taken for the algorithm to finish, in seconds
+        """
+
+        for _ in range(self.get_nlive()-1):
+            self.kill_point()
+
+        # Convert the prior weights to posterior weights
+        # self.dead_points.weights *= torch.exp(
+        #     self.dead_points.get_logL() - self.summaries.get_logZ())
+        log_weights = self.dead_points.get_log_weights() + self.dead_points.get_logL() - self.summaries.get_logZ()
+        self.dead_points.logweights = log_weights
+
+        acc_rate = self.dead_points.get_size() / float(self.like_evals)
+
+        if self.verbose:
+            print('---------------------------------------------')
+            print('Nested Sampling completed')
+            print('Run time =', run_time, 'seconds')
+            print('Acceptance rate =', acc_rate)
+            print('Number of likelihood evaluations =', self.like_evals)
+            print(f'logZ = {self.summaries.get_mean_logZ().item() :.4f} +/- {self.summaries.get_var_logZ().item()**0.5 :.4f}')
+            print('---------------------------------------------')
 
 
-        def run(self):
-            ''' The main function of the algorithm. Runs the Nested sampler'''
+    def run(self):
+        """ The main function of the algorithm. Runs the Nested sampler"""
 
-            start_time = time.time()
+        start_time = time.time()
 
-            # Generate live points
-            self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini, initial_step=True))
+        # Generate live points
+        self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini, initial_step=True))
 
-            # Run the algorithm
-            max_epsilon = 1e1000
+        # Run the algorithm
+        max_epsilon = 1e1000
 
-            # From printing and clustering updates
-            prev_multiple = 0
+        # From printing and clustering updates
+        prev_multiple = 0
 
-            nsteps = 0
-            while (self.n_clusters > 0 and max_epsilon > self.tol):
-                self.move_one_step()
-                epsilon = self._get_epsilon()
-                max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
+        nsteps = 0
+        while (self.n_clusters > 0 and max_epsilon > self.tol):
+            self.move_one_step()
+            epsilon = self._get_epsilon()
+            max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
 
-                next_multiple = (prev_multiple // self.nlive_ini + 1) * self.nlive_ini
-                #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
-                #if self.verbose:
-                if self.n_accepted >= next_multiple:
-                    prev_multiple = next_multiple
+            next_multiple = (prev_multiple // self.nlive_ini + 1) * self.nlive_ini
+            #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
+            #if self.verbose:
+            if self.n_accepted >= next_multiple:
+                prev_multiple = next_multiple
+                if self.clustering:
+                    self.find_clusters()
+
+                if self.verbose:
+                    logZ_mean = self.get_mean_logZ()
+                    print('---------------------------------------------')
+                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}')
                     if self.clustering:
-                        self.find_clusters()
-
-                    if self.verbose:
-                        logZ_mean = self.get_mean_logZ()
+                        cluster_volumes = torch.exp(self.summaries.get_logXp()).detach().numpy()
+                        volume_fractions = cluster_volumes / cluster_volumes.sum()
+                        logZps = self.summaries.get_logZp().detach().numpy()
                         print('---------------------------------------------')
-                        print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}')
-                        if self.clustering:
-                            cluster_volumes = torch.exp(self.summaries.get_logXp()).detach().numpy()
-                            volume_fractions = cluster_volumes / cluster_volumes.sum()
-                            logZps = self.summaries.get_logZp().detach().numpy()
-                            print('---------------------------------------------')
-                            for c in range(self.n_clusters):
-                                if volume_fractions[c] > 1e-4:
-                                    print(f'Cluster {c} has volume fraction {volume_fractions[c] :.4f} and logZp = {logZps[c] :.4f}')
+                        for c in range(self.n_clusters):
+                            if volume_fractions[c] > 1e-4:
+                                print(f'Cluster {c} has volume fraction {volume_fractions[c] :.4f} and logZp = {logZps[c] :.4f}')
 
-                nsteps += 1
+            nsteps += 1
 
-            if nsteps == self.max_nsteps:
-                print('WARNING: Target tolerance was not achieved after', nsteps, 'steps. Increase max_nsteps')
+        run_time = time.time() - start_time
 
-            run_time = time.time() - start_time
+        self.terminate(run_time)
 
-            self.terminate(run_time)
+    def convert_to_getdist(self):
+        """ Converts the output of the algorithm to a Getdist samples object, for
+        plotting the posterior.
+        Returns
+        -------
+        getdist_samples
+          A getdist samples objects with the samples
+        """
 
-        def convert_to_getdist(self):
-            ''' Converts the output of the algorithm to a Getdist samples object, for
-            plotting the posterior.
-            Returns
-            -------
-            getdist_samples
-              A getdist samples objects with the samples
-            '''
+        samples = self.dead_points.get_values().detach().numpy()
+        weights = self.dead_points.get_weights().detach().numpy()
+        loglikes = self.dead_points.get_logL().detach().numpy()
 
-            samples = self.dead_points.get_values().detach().numpy()
-            weights = self.dead_points.get_weights().detach().numpy()
-            loglikes = self.dead_points.get_logL().detach().numpy()
+        getdist_samples = MCSamples(
+            samples=samples,
+            weights=weights,
+            loglikes=loglikes,
+            names=self.paramnames,
+            labels=self.paramlabels
+        )
 
-            getdist_samples = MCSamples(
-                samples=samples,
-                weights=weights,
-                loglikes=loglikes,
-                names=self.paramnames,
-                labels=self.paramlabels
-            )
+        return getdist_samples
 
-            return getdist_samples
-
-        def corner_plot(self, path=None):
-            """
-            Plot a corner plot of the samples
-            :param samples: array of shape (n_samples, n_params)
-            :param path: path to save the plot to
-            :return:
-            """
-            getdist_samples = self.convert_to_getdist()
-            g = plots.get_subplot_plotter()
-            g.triangle_plot([getdist_samples], filled=True)
-            if path is not None:
-                g.export(path)
-            return g
+    def corner_plot(self, path=None):
+        """
+        Plot a corner plot of the samples
+        :param samples: array of shape (n_samples, n_params)
+        :param path: path to save the plot to
+        :return:
+        """
+        getdist_samples = self.convert_to_getdist()
+        g = plots.get_subplot_plotter()
+        g.triangle_plot([getdist_samples], filled=True)
+        if path is not None:
+            g.export(path)
+        return g
 
 
 if __name__ == "__main__":
@@ -573,11 +544,6 @@ if __name__ == "__main__":
     print('True logZ = ', np.log(1 / 10**len(params)))
     print('Number of evaluations', ns.get_like_evals())
 
-    # import matplotlib.pyplot as plt
-    # values = ns.dead_points.get_values().detach().numpy()
-    # fig = plt.figure()
-    # plt.scatter(values[:, 0], values[:, 1], s=ns.dead_points.get_weights().detach().numpy() * 1, alpha=0.5)
-    # plt.show()
 
     from getdist import plots, MCSamples
     samples = ns.convert_to_getdist()
