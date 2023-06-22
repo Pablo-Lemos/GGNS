@@ -7,7 +7,7 @@ dtype = torch.float64
 
 class MultiNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, max_nsteps=10000, verbose=True,
-                 eff=0.1, clustering=False, device=None):
+                 eff=0.2, clustering=False, device=None):
         super().__init__(loglike, params, nlive, tol, max_nsteps, verbose=verbose, clustering=clustering, device=device)
         self.eff = eff
         if clustering:
@@ -45,23 +45,27 @@ class MultiNest(NestedSampler):
         sample = NSPoints(self.nparams)
         sample.add_samples(values=values.reshape(1, -1),
                            logL=newlike.reshape(1), #torch.tensor([newlike], dtype = dtype),
-                           weights=torch.ones(1, device=self.device))
+                           logweights=torch.ones(1, device=self.device))
 
         return sample
 
 if __name__ == "__main__":
-    ndims = 3
-    mvn1 = torch.distributions.MultivariateNormal(loc=10*torch.ones(ndims),
+    ndims = 16
+    mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims, dtype=dtype),
                                                  covariance_matrix=torch.diag(
-                                                     0.5*torch.ones(ndims)))
+                                                     0.2*torch.ones(ndims, dtype=dtype)))
 
-    mvn2 = torch.distributions.MultivariateNormal(loc=-10*torch.ones(ndims),
+    mvn2 = torch.distributions.MultivariateNormal(loc=-1*torch.ones(ndims, dtype=dtype),
                                                  covariance_matrix=torch.diag(
-                                                     0.5*torch.ones(ndims)))
+                                                     0.2*torch.ones(ndims, dtype=dtype)))
+
+    #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    true_samples = mvn1.sample((5000,))
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1, keepdim=False)
-        return lp
+        lp = mvn1.log_prob(theta)
+        #mask = (torch.min(theta, dim=-1)[0] >= -5) * (torch.max(theta, dim=-1)[0] <= 5)
+        return lp #- 1e30 * (1 - mask.float())
 
     params = []
 
@@ -70,7 +74,7 @@ if __name__ == "__main__":
             Param(
                 name=f'p{i}',
                 prior_type='Uniform',
-                prior=(-50, 50),
+                prior=(-5, 5),
                 label=f'p_{i}')
         )
 

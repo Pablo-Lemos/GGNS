@@ -5,7 +5,7 @@ from random import randint
 from numpy import clip, pi
 
 # Default floating point type
-dtype = torch.float32
+dtype = torch.float64
 
 class GaliNest(NestedSampler):
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, max_nsteps=1000000, clustering=False, verbose=True, score=None, device=None):
@@ -51,61 +51,70 @@ class GaliNest(NestedSampler):
         positions = []
         loglikes = []
         last_in = torch.ones(position.shape[0], dtype=torch.bool, device=self.device)
+        p_x, grad_p_x = self.get_score(position)
+        x = position.clone()
 
         while n_reflections < max_reflections:
-            position += velocity * dt
-            p_x, grad_p_x = self.get_score(position)
+            #print(torch.norm(grad_p_x, dim=-1).reshape(-1, 1))
+            x += velocity * dt #/ torch.norm(grad_p_x, dim=-1).reshape(-1, 1)
+            p_x, grad_p_x = self.get_score(x)
 
-            outside = (p_x <= min_like) + ~self.is_in_prior(position)
+            outside = (p_x <= min_like) + (~self.is_in_prior(x))
             normal = grad_p_x / torch.norm(grad_p_x, dim=-1)
             v_dot_normal = torch.einsum('ai, ai -> a', velocity, normal)
-            dealigned = v_dot_normal < 0
+            #dealigned = v_dot_normal < 0
             # Only reflect when the particle is outside the wall, and its velocity its pointed away from the normal
-            reflected = outside * dealigned
+            reflected = outside #* dealigned
             delta_velocity = 2 * v_dot_normal.reshape(-1, 1) * normal
+
+            # r = torch.randn_like(velocity[~reflected], dtype=dtype, device=self.device)
+            # r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            #velocity[~reflected, :] = velocity[~reflected, :] #* (1 + 5e-2 * r)
             velocity[reflected, :] -= delta_velocity[reflected, :]
+
             n_reflections += reflected.sum()
 
-            last_reflections[last_in * reflected, :] = new_reflections[last_in * reflected, :]
-            new_reflections[last_in * reflected, :] = position[last_in * reflected, :]
-
-            last_in = ~outside
+            # last_reflections[last_in * reflected, :] = new_reflections[last_in * reflected, :]
+            # new_reflections[last_in * reflected, :] = position[last_in * reflected, :]
+            #
+            # last_in = ~outside
 
             # self.n_out_steps += reflected.sum()
             # self.n_in_steps += (~reflected).sum()
 
-            # if (n_reflections > max_reflections/2):
-            #     positions.append(position[~outside, :])
-            #     loglikes.append(p_x[~outside])
+            if n_reflections > (max_reflections / 2):
+                positions.append(x[~outside, :].clone())
+                loglikes.append(p_x[~outside].clone())
 
-        # positions = torch.cat(positions, dim=0)
-        # loglikes = torch.cat(loglikes, dim=0)
-        # if positions.shape[0] == 0:
-        #     return position, -1e30 * torch.ones_like(p_x)
-        # else:
-        #     # Select a position from the history of positions
-        #     idx = randint(0, positions.shape[0] - 1)
-        #     position = positions[idx, :]
-        #     p_x = loglikes[idx]
-        #
-        #     return position.unsqueeze(0), p_x
-        if torch.any(last_reflections) == 0:
+        positions = torch.cat(positions, dim=0)
+        loglikes = torch.cat(loglikes, dim=0)
+        if positions.shape[0] == 0:
             return position, -1e30 * torch.ones_like(p_x)
         else:
-            segments = new_reflections - last_reflections
+            # Select a position from the history of positions
+            idx = randint(0, positions.shape[0] - 1)
+            pos = positions[idx, :]
+            p_x = loglikes[idx]
 
-            # Generate random values between 0 and 1
-            random_values = torch.rand((position.shape[0], 1))
-
-            # Multiply the line segments by the random values
-            # to get the points along the segments
-            pos_out = last_reflections + random_values * segments
-            logl_out, _ = self.get_score(pos_out)
-            mask2 = logl_out < min_like
-
-            logl_out[mask2] = -1e30
-
-            return pos_out, logl_out#, out_frac
+            return pos.unsqueeze(0), p_x
+        #out_frac = n_out_steps / (n_out_steps + n_in_steps)
+        # if torch.any(last_reflections) == 0:
+        #     return position, -1e30 * torch.ones_like(p_x)#, out_frac
+        # else:
+        #     segments = new_reflections - last_reflections
+        #
+        #     # Generate random values between 0 and 1
+        #     random_values = torch.rand((position.shape[0], 1))
+        #
+        #     # Multiply the line segments by the random values
+        #     # to get the points along the segments
+        #     pos_out = last_reflections + random_values * segments
+        #     logl_out, _ = self.get_score(pos_out)
+        #     mask2 = logl_out < min_like
+        #
+        #     logl_out[mask2] = -1e30
+        #
+        #     return pos_out, logl_out#, out_frac
 
     def reflect_sampling(self, min_loglike):
         """
@@ -129,17 +138,32 @@ class GaliNest(NestedSampler):
         while not accepted:
             r = torch.randn_like(x, dtype=dtype, device=self.device)
             velocity = r / torch.linalg.norm(r, dim=-1, keepdim=True)
-            new_x, new_loglike = self.simulate_particle_in_box(position=x, velocity=velocity, min_like=min_loglike,
-                                                               dt=self.dt, max_reflections=5)
+            new_x, new_loglike = self.simulate_particle_in_box(position=x,
+                                                               velocity=velocity,
+                                                               min_like=min_loglike,
+                                                               dt=self.dt,
+                                                               max_reflections=20)
+
+            out_frac = self.n_out_steps / (self.n_out_steps + self.n_in_steps)
+            if out_frac > 0.2:
+                self.dt = clip(self.dt * 0.9, 1e-5, 100)
+                if self.verbose: print("Decreasing dt to ", self.dt)
+                self.n_in_steps = 0
+                self.n_out_steps = 0
+            elif out_frac < 0.05:
+                self.dt = clip(self.dt * 1.1, 1e-5, 100)
+                if self.verbose: print("Increasing dt to ", self.dt)
+                self.n_in_steps = 0
+                self.n_out_steps = 0
 
             #in_prior = (torch.min(new_x - self._lower, dim=-1)[0] >= torch.zeros(new_x.shape[0])) * (torch.max(new_x - self._upper, dim=-1)[0] <= torch.zeros(new_x.shape[0]))
             in_prior = self.is_in_prior(new_x)
             accepted = (new_loglike > min_loglike) * in_prior
 
-            if not accepted:
-                num_fails += 1
-                initial_point = self.live_points.get_random_sample(cluster_volumes)
-                x = initial_point.get_values()
+            # if not accepted:
+            #     num_fails += 1
+            #     initial_point = self.live_points.get_random_sample(cluster_volumes)
+            #     x = initial_point.get_values()
 
         assert self.is_in_prior(new_x), "new_x = {}, lower = {}, upper = {}".format(new_x, self._lower, self._upper)
         assert new_loglike > min_loglike[0], "loglike = {}, min_loglike = {}".format(loglike, min_loglike)
@@ -148,7 +172,7 @@ class GaliNest(NestedSampler):
         sample = NSPoints(self.nparams)
         sample.add_samples(values=new_x.reshape(1, -1),
                            logL=new_loglike.reshape(1),
-                           logweights=torch.ones(1, device=self.device),
+                           logweights=torch.zeros(1, device=self.device),
                            labels=initial_point.get_labels())
         return sample
 
@@ -183,11 +207,12 @@ class GaliNest(NestedSampler):
             self.n_accepted_pure_ns += 1
             self.acc_rate_pure_ns = self.n_accepted_pure_ns / self.n_tries_pure_ns
 
+        #print(min_like, newsample.get_logL())
         return newsample
 
 
 if __name__ == "__main__":
-    ndims = 5
+    ndims = 16
     mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims, dtype=dtype),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims, dtype=dtype)))
@@ -220,7 +245,8 @@ if __name__ == "__main__":
         loglike=get_loglike,
         params=params,
         clustering=False,
-        tol=1e-2
+        tol=1e-1,
+        dt_ini=0.1,
     )
 
     ns.run()

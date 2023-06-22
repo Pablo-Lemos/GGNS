@@ -148,7 +148,7 @@ class DyGaliNest(DynamicNestedSampler):
             #print(step, torch.min(num_reflections), torch.max(num_reflections))
             #print(x[num_reflections == torch.min(num_reflections)])
             # reflected = False
-            velocity_normed = velocity / torch.norm(velocity, dim=-1, keepdim=True)
+            #velocity_normed = velocity / torch.norm(velocity, dim=-1, keepdim=True)
             x += velocity * dt #/ torch.abs(torch.einsum('ij,ij->i', self.get_score(x)[1], velocity_normed.to(torch.float32)).reshape(-1, 1))
 
             # Reflect off the walls
@@ -173,7 +173,8 @@ class DyGaliNest(DynamicNestedSampler):
             delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
             delta_velocity_ref = 2 * torch.einsum('ai, ai -> a', velocity, v_ref).reshape(-1, 1) * v_ref
             velocity[reflected * ~box_reflected, :] -= delta_velocity[reflected * ~box_reflected, :]
-            velocity[box_reflected * ~reflected, :] -= delta_velocity_ref[box_reflected * ~reflected, :]
+            #velocity[box_reflected * ~reflected, :] -= delta_velocity_ref[box_reflected * ~reflected, :]
+            velocity[box_reflected, :] -= delta_velocity_ref[box_reflected, :]
 
             num_reflections += reflected.clone()
             num_inside_steps += ~reflected.clone()
@@ -183,9 +184,9 @@ class DyGaliNest(DynamicNestedSampler):
                 mask.append(~reflected * in_prior)
 
             # v_norm = torch.linalg.norm(velocity, dim=-1, keepdim=True)
-            r = torch.randn_like(velocity[~reflected * ~box_reflected], dtype=dtype, device=self.device)
-            r /= torch.linalg.norm(r, dim=-1, keepdim=True)
-            velocity[~reflected * ~box_reflected] = velocity[~reflected * ~box_reflected] #* (1 + 5e-2 * r)
+            # r = torch.randn_like(velocity[~reflected * ~box_reflected], dtype=dtype, device=self.device)
+            # r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+            # velocity[~reflected * ~box_reflected] = velocity[~reflected * ~box_reflected] * (1 + 5e-2 * r)
             n_out_steps += reflected.sum()
             n_in_steps += (~reflected).sum()
 
@@ -270,11 +271,11 @@ class DyGaliNest(DynamicNestedSampler):
 
             assert (torch.min(x_ini - self._lower).item() >= 0) and (torch.max(x_ini - self._upper).item() <= 0)
 
-            new_x_active, new_loglike_active, out_frac = self.simulate_particle_in_box_v2(position=x_ini[active],
+            new_x_active, new_loglike_active, out_frac = self.simulate_particle_in_box(position=x_ini[active],
                                                                                        velocity=velocity[active],
                                                                                        min_like=min_loglike,
                                                                                        dt=self.dt,
-                                                                                       #max_steps=100*self.nparams
+                                                                                       max_steps=100*self.nparams
                                                                                           )
             new_x[active] = new_x_active.to(dtype)
             new_loglike[active] = new_loglike_active.to(dtype)
@@ -390,7 +391,7 @@ class DyGaliNest(DynamicNestedSampler):
 
 
 if __name__ == "__main__":
-    ndims = 64
+    ndims = 128
     mvn1 = torch.distributions.MultivariateNormal(loc=0*torch.ones(ndims),
                                                  covariance_matrix=torch.diag(
                                                      0.2*torch.ones(ndims)))
@@ -427,7 +428,7 @@ if __name__ == "__main__":
         params=params,
         verbose=True,
         clustering=False,
-        dt_ini=1/len(params),
+        dt_ini=0.1, #1/len(params),
         tol=1e-1
     )
 

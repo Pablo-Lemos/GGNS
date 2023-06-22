@@ -32,15 +32,17 @@ class NestedSamplingSummaries:
         return self.logX.unsqueeze(0)
 
     def get_mean_logZ(self):
-        old_logZ = 2 * self.logZ - 0.5 * self.logZ2
-        return old_logZ
+        logZ = 2 * self.logZ - 0.5 * self.logZ2
+        #logZ = self.logZ
+        return logZ
 
     def get_var_logZ(self):
-        old_var_logZ = self.logZ2 - 2 * self.logZ
-        return old_var_logZ
+        var_logZ = self.logZ2 - 2 * self.logZ
+        #var_logZ = self.logZ2 - self.logZ**2
+        return var_logZ
 
     def update(self, logL, label, np):
-        np = torch.as_tensor(np, dtype=torch.float64, device=self.device)
+        np = torch.as_tensor(np, dtype=dtype, device=self.device)
 
         # log Z
         self.logZ = torch.logsumexp(torch.cat([self.logZ.reshape(1),
@@ -53,7 +55,7 @@ class NestedSamplingSummaries:
                                                 self.logZX + logL + torch.log(
                                                         torch.as_tensor(2. / (np + 1.), device=self.device)),
                                                 self.logX2 + 2 * logL + torch.log(
-                                                       torch.as_tensor(2. / (np + 1.) / (np + 2.), device=self.device))
+                                                       torch.as_tensor(1. / (np + 1.) / (np + 2.), device=self.device))
                                                 ]), 0)
 
         # log ZXp
@@ -66,10 +68,7 @@ class NestedSamplingSummaries:
         # log Xp
         self.logX = self.logX + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
 
-
-        self.logX2 = self.logX2 + torch.log(
-            torch.as_tensor(np / (np + 2.), device=self.device))
-
+        self.logX2 = self.logX2 + torch.log(torch.as_tensor(np / (np + 2.), device=self.device))
 
     def split(self, cluster, labels):
         n = len(labels)

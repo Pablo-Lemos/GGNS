@@ -13,7 +13,7 @@ from torchNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples
 
 # Default floating point type
-dtype = torch.float32
+dtype = torch.float64
 
 class NestedSampler:
         '''
@@ -531,7 +531,7 @@ class NestedSampler:
 
 
 if __name__ == "__main__":
-    ndims = 2
+    ndims = 5
     mvn1 = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims),
                                                   covariance_matrix=torch.diag(
                                                       0.2 * torch.ones(ndims)))
@@ -540,13 +540,13 @@ if __name__ == "__main__":
                                                   covariance_matrix=torch.diag(
                                                       0.2 * torch.ones(ndims)))
 
-    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    #true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
+    true_samples = mvn1.sample((5000,))
 
     def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1,
-                             keepdim=False) - torch.log(torch.tensor(2.0))
-        return lp
-
+        lp = mvn1.log_prob(theta)
+        #mask = (torch.min(theta, dim=-1)[0] >= -5) * (torch.max(theta, dim=-1)[0] <= 5)
+        return lp #- 1e30 * (1 - mask.float())
 
     params = []
 
@@ -563,7 +563,7 @@ if __name__ == "__main__":
         nlive=25*ndims,
         loglike=get_loglike,
         params=params,
-        clustering=True,
+        clustering=False,
         verbose=True,)
 
     ns.run()
