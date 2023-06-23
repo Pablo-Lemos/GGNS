@@ -8,7 +8,7 @@ dtype = torch.float64
 
 class EllipsoidalNS(NestedSampler):
     """
-    This Nested Sampler uses the MultiNest algorithm to sample the posterior.
+    This Nested Sampler uses Ellipsoids to sample the posterior.
     """
     def __init__(self, loglike, params, nlive=50, tol=0.1, verbose=True, eff=0.1, clustering=False, device=None):
         """

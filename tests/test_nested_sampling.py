@@ -1,10 +1,10 @@
 import unittest
 import torch
 import numpy as np
-from torchNS import Param, NestedSampler, EllipsoidalNS
+from torchNS import Param, NestedSampler, EllipsoidalNS, Polychord
 
 def test_nested_sampling(self, sampler='base', ndims=2):
-    assert sampler in ['base', 'ellipsoidal'], 'Test not implemented for this sampler'
+    assert sampler in ['base', 'ellipsoidal', 'polychord'], 'Test not implemented for this sampler'
     mvn = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims),
                                                  covariance_matrix=torch.diag(0.2 * torch.ones(ndims))
                                                  )
@@ -30,6 +30,13 @@ def test_nested_sampling(self, sampler='base', ndims=2):
             eff=1.,
             clustering=False,
             verbose=False)
+    elif sampler == 'polychord':
+        ns = Polychord(
+            nlive=25 * ndims,
+            loglike=mvn.log_prob,
+            params=params,
+            clustering=False,
+            verbose=False)
 
     # Run the sampler
     ns.run()
@@ -40,7 +47,6 @@ class NestedSamplingTest(unittest.TestCase):
     def test_base(self):
         ndims = 2
         logZ, logZerr = test_nested_sampling(self, sampler='base', ndims=ndims)
-        # Check that logZ is within 10 sigma of the true value
         self.assertAlmostEqual(logZ,
                                np.log(1 / 10 ** ndims),
                                delta=10*logZerr)
@@ -48,7 +54,13 @@ class NestedSamplingTest(unittest.TestCase):
     def test_ellipsoidal(self):
         ndims = 2
         logZ, logZerr = test_nested_sampling(self, sampler='ellipsoidal', ndims=ndims)
-        # Check that logZ is within 10 sigma of the true value
+        self.assertAlmostEqual(logZ,
+                               np.log(1 / 10 ** ndims),
+                               delta=10*logZerr)
+
+    def test_polychord(self):
+        ndims = 2
+        logZ, logZerr = test_nested_sampling(self, sampler='polychord', ndims=ndims)
         self.assertAlmostEqual(logZ,
                                np.log(1 / 10 ** ndims),
                                delta=10*logZerr)

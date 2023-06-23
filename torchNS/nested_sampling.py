@@ -163,10 +163,7 @@ class NestedSampler:
         v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
         in_prior = self.is_in_prior(theta)
 
-        if self.given_score:
-            score = self.score(theta)
-        else:
-            score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
+        score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
 
         with torch.no_grad():
             score[~in_prior] = v_ref[~in_prior]
