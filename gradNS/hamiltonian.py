@@ -1,6 +1,6 @@
 import torch
-from torchNS.dynamic import DynamicNestedSampler
-from torchNS.param import Param, NSPoints
+from gradNS.dynamic import DynamicNestedSampler
+from gradNS.param import Param, NSPoints
 from numpy import clip, pi
 
 # Default floating point type

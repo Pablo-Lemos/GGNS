@@ -7,9 +7,9 @@ March, 2020
 
 import torch
 import time
-from torchNS.utils import uniform, gmm_bic, get_knn_clusters
-from torchNS.param import Param, NSPoints
-from torchNS.summaries import NestedSamplingSummaries
+from gradNS.utils import uniform, gmm_bic, get_knn_clusters
+from gradNS.param import Param, NSPoints
+from gradNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples
 
 # Default floating point type

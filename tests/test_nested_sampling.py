@@ -1,7 +1,7 @@
 import unittest
 import torch
 import numpy as np
-from torchNS import Param, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, HamiltonianNS
+from gradNS import Param, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, HamiltonianNS
 
 def test_nested_sampling(self, sampler='base', ndims=2):
     assert sampler in ['base', 'ellipsoidal', 'slice', 'dynamic', 'hamiltonian'], 'Test not implemented for this ' \

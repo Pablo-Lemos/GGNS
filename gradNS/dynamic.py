@@ -1,6 +1,6 @@
 import torch
-from torchNS.nested_sampling import NestedSampler
-from torchNS.param import Param, NSPoints
+from gradNS.nested_sampling import NestedSampler
+from gradNS.param import Param, NSPoints
 
 # Default floating point type
 dtype = torch.float64
