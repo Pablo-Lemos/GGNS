@@ -6,7 +6,7 @@ from torchNS.param import Param, NSPoints
 dtype = torch.float64
 
 
-class Polychord(NestedSampler):
+class SliceNS(NestedSampler):
     """
     This Nested Sampler uses Slice Sampling to generate new samples.
     """
