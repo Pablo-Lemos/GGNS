@@ -1,7 +1,7 @@
 import unittest
 import torch
 import numpy as np
-from torchNS import Param, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, DyGaliNest
+from torchNS import Param, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, HamiltonianNS
 
 def test_nested_sampling(self, sampler='base', ndims=2):
     assert sampler in ['base', 'ellipsoidal', 'slice', 'dynamic', 'hamiltonian'], 'Test not implemented for this ' \
@@ -46,7 +46,7 @@ def test_nested_sampling(self, sampler='base', ndims=2):
                     clustering=False,
                     verbose=False)
     elif sampler == 'hamiltonian':
-        ns = DyGaliNest(
+        ns = HamiltonianNS(
             nlive=25 * ndims,
             loglike=mvn.log_prob,
             params=params,

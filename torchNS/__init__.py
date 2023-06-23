@@ -3,6 +3,5 @@ from .summaries import NestedSamplingSummaries
 from .nested_sampling import NestedSampler
 from .ellipsoidal import EllipsoidalNS
 from .slice import SliceNS
-from .galilean import GaliNest
-from .dygalilean import DyGaliNest
+from .hamiltonian import HamiltonianNS
 from .dynamic import DynamicNestedSampler

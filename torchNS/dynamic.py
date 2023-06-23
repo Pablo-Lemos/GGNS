@@ -6,97 +6,89 @@ from torchNS.param import Param, NSPoints
 dtype = torch.float64
 
 class DynamicNestedSampler(NestedSampler):
-    def __init__(self, loglike, params, nlive=50, tol=0.1, max_nsteps=10000, verbose=True,
-                 clustering=False, device=None):
+    """
+    This Nested Sampler uses Dynamic Nested Sampling to sample the posterior.
+    """
+    def __init__(self, loglike, params, nlive=50, tol=0.1, clustering=False, verbose=True, device=None):
         """ In this Nested Sampler, we start with a set of live points, and instead of killing one at a time, we
         kill half of them and replace them with new samples from the prior. This is done until the tolerance is reached.
         """
-        super().__init__(loglike, params, nlive, tol, max_nsteps, verbose=verbose, clustering=clustering, device=device)
+        super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
 
     def move_one_step(self):
-        ''' Find highest log likes, get rid of those point, and sample a new ones '''
-        n_points = self.nlive_ini//2
-        for i in range(n_points):
-            sample = self.kill_point()
+        """
+        Move one step in the Dynamic Nested Sampling algorithm, by replacing half the samples with a new half
 
-        self.add_point_batch(min_logL=sample.get_logL(), n_points=n_points)
+        If using clustering, we kill points and assign a label, then add new points with the same label.
+        """
+        if self.n_clusters == 1:
+            n_points = self.nlive_ini//2
+            for _ in range(n_points):
+                sample = self.kill_point()
+
+            logl = sample.get_logL().clone()
+            self.add_point_batch(min_logL=logl, n_points=n_points, labels=torch.zeros(n_points, dtype=torch.int))
+        else:
+            sample = self.kill_point()
+            new_labels = torch.zeros(self.n_clusters, dtype=torch.int)
+            cluster_volumes = torch.exp(self.summaries.get_logXp())
+            num_points = self.live_points.count_labels()
+            idx = torch.multinomial(cluster_volumes, 1)
+            new_labels[idx] += 1
+            while torch.min(num_points - new_labels) > 1:
+                sample = self.kill_point()
+                cluster_volumes = torch.exp(self.summaries.get_logXp())
+                num_points = self.live_points.count_labels()
+                idx = torch.multinomial(cluster_volumes, 1)
+                new_labels[idx] += 1
+
+            logl = sample.get_logL().clone()
+            self.add_point_batch(min_logL=logl, n_points=torch.sum(new_labels).item(), labels=new_labels)
 
     def add_point_batch(self, min_logL, n_points, labels=None):
-        # Add a new sample
+        """
+        Add a new sample to the live points, and assign it a label
+
+        Parameters
+        ----------
+        min_logL : float
+            The minimum log likelihood of the new sample
+        n_points : int
+            The number of points to add
+        labels : torch.Tensor
+            The labels of the new points
+
+        Returns
+        -------
+        """
         newsample = self.find_new_sample_batch(min_logL, n_points=n_points, labels=labels)
         assert torch.max(newsample.get_logL()) > min_logL, "New sample has lower likelihood than old one"
-
-        if self.n_clusters > 1:
-            # Find closest point to new sample
-            values = self.live_points.get_values()
-
-            dist = torch.sum((values.reshape(-1, 1, self.nparams) - newsample.get_values().reshape(1, -1, self.nparams)) ** 2, dim=-1)
-            idx = torch.argmin(dist, dim=0)
-
-            # Assign its label to the new point
-            newsample.set_labels(self.live_points.get_labels()[idx])
-
         self.n_accepted += n_points
         self.live_points.add_nspoint(newsample)
 
     def find_new_sample_batch(self, min_like, n_points, labels=None):
-            ''' Run a for loop over find_new_sample
-            '''
-            sample = NSPoints(self.nparams)
+        """
+        Run a for loop over find_new_sample
 
-            for i in range(n_points):
-                newsample = self.find_new_sample(min_like)
-                sample.add_nspoint(newsample)
+        Parameters
+        ----------
+        min_like : float
+            The minimum log likelihood of the new sample
+        n_points : int
+            The number of points to add
+        labels : torch.Tensor
+            The labels of the new points
 
-            return sample
+        Returns
+        -------
+        sample : NSPoints
+            The new sample
+        """
+        sample = NSPoints(self.nparams)
 
+        # In the base class, find the points "brute force"
+        for _ in range(n_points):
+            newsample = self.find_new_sample(min_like)
+            sample.add_nspoint(newsample)
 
-if __name__ == "__main__":
-    ndims = 2
-    mvn1 = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims),
-                                                  covariance_matrix=torch.diag(
-                                                      0.2 * torch.ones(ndims)))
-
-    mvn2 = torch.distributions.MultivariateNormal(loc=-1 * torch.ones(ndims),
-                                                  covariance_matrix=torch.diag(
-                                                      0.2 * torch.ones(ndims)))
-
-    true_samples = torch.cat([mvn1.sample((5000,)), mvn2.sample((5000,))], dim=0)
-
-    def get_loglike(theta):
-        lp = torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=-1,
-                             keepdim=False) - torch.log(torch.tensor(2.0))
-        return lp
-
-
-    params = []
-
-    for i in range(ndims):
-        params.append(
-            Param(
-                name=f'p{i}',
-                prior_type='Uniform',
-                prior=(-5, 5),
-                label=f'p_{i}')
-        )
-
-    ns = DynamicNestedSampler(
-        nlive=25*ndims+1,
-        loglike=get_loglike,
-        params=params,
-        clustering=False,
-        verbose=True,)
-
-    ns.run()
-
-    # The true logZ is the inverse of the prior volume
-    import numpy as np
-    print('True logZ = ', np.log(1 / 10**len(params)))
-    print('Number of evaluations', ns.get_like_evals())
-
-    from getdist import plots, MCSamples
-    samples = ns.convert_to_getdist()
-    true_samples = MCSamples(samples=true_samples.numpy(), names=[f'p{i}' for i in range(ndims)])
-    g = plots.get_subplot_plotter()
-    g.triangle_plot([true_samples, samples], filled=True, legend_labels=['True', 'GDNest'])
-    g.export('test.png')
+        return sample

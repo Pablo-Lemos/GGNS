@@ -7,7 +7,7 @@ from numpy import clip, pi
 dtype = torch.float64
 
 
-class DyGaliNest(DynamicNestedSampler):
+class HamiltonianNS(DynamicNestedSampler):
     """
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
