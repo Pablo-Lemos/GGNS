@@ -61,7 +61,7 @@ class HamiltonianNS(DynamicNestedSampler):
             p_x, grad_p_x = self.get_score(x)
 
             # Check if the point is inside the slice
-            reflected = (p_x <= min_like)
+            reflected = p_x <= min_like
 
             # If the point is inside the slice, update the velocity
             normal = grad_p_x / torch.norm(grad_p_x, dim=1, keepdim=True)
@@ -126,8 +126,8 @@ class HamiltonianNS(DynamicNestedSampler):
            A new sample
         """
         # Get initial points from set of existing live points
-        n_samples_per_label = torch.bincount(labels)
-        point = self.live_points.get_samples_from_labels(n_samples_per_label)
+        # n_samples_per_label = torch.bincount(labels)
+        point = self.live_points.get_samples_from_labels(labels)
         x_ini = point.get_values()
 
         # Initalize arrays
@@ -158,11 +158,11 @@ class HamiltonianNS(DynamicNestedSampler):
             # Adapt time step if there are too many, ot not enough reflections
             if (out_frac > 0.2) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 0.9, 1e-5, 10)
-                if self.verbose: print("Decreasing dt to ", self.dt)
+                # if self.verbose: print("Decreasing dt to ", self.dt)
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
             elif (out_frac < 0.05) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 1.1, 1e-5, 10)
-                if self.verbose: print("Increasing dt to ", self.dt)
+                # if self.verbose: print("Increasing dt to ", self.dt)
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
             else:
                 in_prior = self.is_in_prior(new_x)
@@ -179,7 +179,7 @@ class HamiltonianNS(DynamicNestedSampler):
         sample.add_samples(values=new_x,
                            logL=new_loglike,
                            logweights=torch.zeros(new_loglike.shape[0], device=self.device),
-                           labels=labels
+                           labels=point.get_labels()
                            )
         return sample
 

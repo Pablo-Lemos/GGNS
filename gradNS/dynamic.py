@@ -27,7 +27,8 @@ class DynamicNestedSampler(NestedSampler):
                 sample = self.kill_point()
 
             logl = sample.get_logL().clone()
-            self.add_point_batch(min_logL=logl, n_points=n_points, labels=torch.zeros(n_points, dtype=torch.int))
+            labels = torch.bincount(torch.zeros(n_points, dtype=torch.int))
+            self.add_point_batch(min_logL=logl, n_points=n_points, labels=labels)
         else:
             sample = self.kill_point()
             new_labels = torch.zeros(self.n_clusters, dtype=torch.int)
