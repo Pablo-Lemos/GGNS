@@ -5,3 +5,4 @@ from .ellipsoidal import EllipsoidalNS
 from .slice import SliceNS
 from .galilean import GaliNest
 from .dygalilean import DyGaliNest
+from .dynamic import DynamicNestedSampler

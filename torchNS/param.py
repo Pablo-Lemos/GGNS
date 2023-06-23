@@ -249,7 +249,7 @@ class NSPoints:
         else:
             labels = torch.multinomial(volumes / torch.sum(volumes), num_samples=n_samples, replacement=True)
             # Calculate the number of samples to take from each label
-            n_samples_per_label = torch.bincount(labels)#, minlength=torch.max(labels)+1)
+            n_samples_per_label = torch.bincount(labels)
             sample = self.get_samples_from_labels(n_samples_per_label)
         return sample
 

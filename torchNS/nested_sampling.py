@@ -348,14 +348,6 @@ class NestedSampler:
         newsample = self.find_new_sample(min_logL)
         assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
 
-        if self.clustering:
-            # Find closest point to new sample
-            values = self.live_points.get_values()
-            dist = torch.sum((values - newsample.get_values())**2, dim=1)
-            idx = torch.argmin(dist)
-
-            # Assign its label to the new point
-            newsample.set_labels(self.live_points.get_labels()[idx].reshape(1))
         self.live_points.add_nspoint(newsample)
         self.n_accepted += 1
 
