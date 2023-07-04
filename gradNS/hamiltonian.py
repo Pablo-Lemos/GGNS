@@ -11,13 +11,18 @@ class HamiltonianNS(DynamicNestedSampler):
     """
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, clustering=False, verbose=True, device=None):
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=5, max_reflections=10,
+                 clustering=False, verbose=True, device=None):
         super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
 
         # Initial time step size (it will be adapted)
         self.dt = dt_ini
 
-    def hamiltonian_slice_sampling(self, position, velocity, min_like, min_reflections, max_reflections):
+        # Minimum and maximum number of reflections
+        self.min_reflections = min_reflections
+        self.max_reflections = max_reflections
+
+    def hamiltonian_slice_sampling(self, position, velocity, min_like):
         """
         Hamiltonian Slice Sampling algorithm for PyTorch.
 
@@ -51,7 +56,7 @@ class HamiltonianNS(DynamicNestedSampler):
 
         # The algorithm stops when the point with the smallest number of reflections has reached the
         # maximum number of reflections
-        while torch.min(num_reflections) < max_reflections:
+        while torch.min(num_reflections) < self.max_reflections:
             # Update position with Euler step
             x += velocity * self.dt
 
@@ -71,7 +76,7 @@ class HamiltonianNS(DynamicNestedSampler):
 
             # Update the number of positions
             num_reflections += reflected.clone()
-            if torch.min(num_reflections) > min_reflections:
+            if torch.min(num_reflections) > self.min_reflections:
                 # If the point has reached the minimum number of reflections, save it
                 pos_ls.append(x.clone())
                 logl_ls.append(p_x.clone())
@@ -149,8 +154,6 @@ class HamiltonianNS(DynamicNestedSampler):
             new_x_active, new_loglike_active, out_frac = self.hamiltonian_slice_sampling(position=x_ini[active],
                                                                                          velocity=velocity[active],
                                                                                          min_like=min_loglike,
-                                                                                         min_reflections=5,
-                                                                                         max_reflections=10,
                                                                                          )
             new_x[active] = new_x_active#.to(dtype)
             new_loglike[active] = new_loglike_active#.to(dtype)
