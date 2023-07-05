@@ -15,6 +15,46 @@ from getdist import MCSamples
 # Default floating point type
 dtype = torch.float64
 
+class Prior():
+    """
+    A class to represent priors to be sampled
+    """
+
+    def __init__(self, score, sample):
+        """
+        Parameters
+        ----------
+        score : function
+            The score function
+        sample : function
+            The sampling function
+        """
+        assert callable(score), 'score must be a callable function'
+        assert callable(sample), 'sample must be a callable function'
+        self.score = score
+        self.sample = sample
+
+    def __call__(self, x):
+        """
+        Parameters
+        ----------
+        x : torch.Tensor
+            The point to evaluate the prior at
+        """
+
+        return self.score(x)
+
+    def sample(self, npoints):
+        """
+        Parameters
+        ----------
+        npoints : int
+            The number of points to sample
+        """
+
+        return self.sample(npoints)
+
+
 class NestedSampler:
     """
     Nested Sampling class
@@ -60,9 +100,20 @@ class NestedSampler:
         self.summaries = NestedSamplingSummaries(device=self.device)
         self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
         self.n_accepted = 0
+        self.prior = None
 
         self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
+
+    def add_prior(self, prior):
+        """
+        Parameters
+        ----------
+        prior : Prior
+            The prior to be added
+        """
+        assert isinstance(prior, Prior), 'Prior must be an instance of the Prior class'
+        self.prior = prior
 
     def sample_prior(self, npoints, initial_step=False):
         """ Produce samples from the prior distributions
@@ -83,23 +134,30 @@ class NestedSampler:
         # Create an empty list for the samples
         prior_samples = torch.zeros([npoints, self.nparams], dtype=dtype, device=self.device)
 
-        # Iterate over all parameters
-        for i, param in enumerate(self.params):
+        if self.prior is None:
+            # Iterate over all parameters
+            for i, param in enumerate(self.params):
+                if initial_step == True:
+                    self.paramnames.append(param.name)
+                    self.paramlabels.append(param.label)
+                if param.prior_type == 'Uniform':
+                    prior_samples[:,i] = uniform(low=param.prior[0],
+                                                 high=param.prior[1],
+                                                 size=npoints,
+                                                 dtype=dtype)
+                # elif param.prior_type == 'Gaussian':
+                #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
+                #                                       std=param.prior[1],
+                #                                       size=npoints,
+                #                                       device=self.device)
+                else:
+                    raise ValueError('Prior type not recognised, only Uniform is implemented for now')
+        else:
             if initial_step == True:
-                self.paramnames.append(param.name)
-                self.paramlabels.append(param.label)
-            if param.prior_type == 'Uniform':
-                prior_samples[:,i] = uniform(low=param.prior[0],
-                                             high=param.prior[1],
-                                             size=npoints,
-                                             dtype=dtype)
-            # elif param.prior_type == 'Gaussian':
-            #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
-            #                                       std=param.prior[1],
-            #                                       size=npoints,
-            #                                       device=self.device)
-            else:
-                raise ValueError('Prior type not recognised, only Uniform is implemented for now')
+                for i, param in enumerate(self.params):
+                    self.paramnames.append(param.name)
+                    self.paramlabels.append(param.label)
+            prior_samples = self.prior.sample(npoints)
 
         # Calculate log likelihood
         logL = torch.zeros(npoints, dtype=dtype, device=self.device)
@@ -128,9 +186,12 @@ class NestedSampler:
         """
         assert len(x.shape) == 2
         assert x.shape[1] == self.nparams
-        in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * \
-                   (torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
-        return in_prior
+        if self.prior is None:
+            in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * \
+                       (torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
+            return in_prior
+        else:
+            return torch.ones(x.shape[0], dtype=torch.bool, device=self.device)
 
     def get_score(self, theta):
         """ Calculate the score for a given point

@@ -81,6 +81,14 @@ class HamiltonianNS(DynamicNestedSampler):
                 logl_ls.append(p_x.clone())
                 mask.append(~reflected * in_prior)
 
+            if self.prior is not None:
+                r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
+                #velocity[~reflected * in_prior] = velocity[~reflected * in_prior] + self.dt * self.prior(x[~reflected * in_prior]) + 2**0.5 * r
+                velocity[~reflected * in_prior] = self.dt * self.prior(x[~reflected * in_prior]) + 2 ** 0.5 * r
+            # else:
+            #     r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
+            #     velocity[~reflected * in_prior] = 2 ** 0.5 * r
+
             # If sigma > 0, add noise to the velocity of non-reflected points
             if self.sigma_vel > 0:
                 r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
@@ -166,11 +174,11 @@ class HamiltonianNS(DynamicNestedSampler):
             # Adapt time step if there are too many, ot not enough reflections
             if (out_frac > 0.2) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 0.9, 1e-5, 10)
-                # if self.verbose: print("Decreasing dt to ", self.dt)
+                if self.verbose: print("Decreasing dt to ", self.dt)
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
             elif (out_frac < 0.05) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 1.1, 1e-5, 10)
-                # if self.verbose: print("Increasing dt to ", self.dt)
+                if self.verbose: print("Increasing dt to ", self.dt)
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
             else:
                 in_prior = self.is_in_prior(new_x)
