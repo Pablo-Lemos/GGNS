@@ -12,7 +12,7 @@ class HamiltonianNS(DynamicNestedSampler):
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=5, max_reflections=10,
-                 clustering=False, verbose=True, device=None):
+                 sigma_vel=5e-2, clustering=False, verbose=True, device=None):
         super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
 
         # Initial time step size (it will be adapted)
@@ -21,6 +21,9 @@ class HamiltonianNS(DynamicNestedSampler):
         # Minimum and maximum number of reflections
         self.min_reflections = min_reflections
         self.max_reflections = max_reflections
+
+        # Standard deviation for the velocity noise
+        self.sigma_vel = sigma_vel
 
     def hamiltonian_slice_sampling(self, position, velocity, min_like):
         """
@@ -34,10 +37,6 @@ class HamiltonianNS(DynamicNestedSampler):
             The initial velocity
         min_like : float
             The minimum likelihood
-        min_reflections : int
-            The minimum number of reflections
-        max_reflections : int
-            The maximum number of reflections
         """
         assert(len(position.shape) == 2), "Position must be a 2D tensor"
         # Keep track of the number of reflections and inside steps, to adjust the time step
@@ -81,6 +80,12 @@ class HamiltonianNS(DynamicNestedSampler):
                 pos_ls.append(x.clone())
                 logl_ls.append(p_x.clone())
                 mask.append(~reflected * in_prior)
+
+            # If sigma > 0, add noise to the velocity of non-reflected points
+            if self.sigma_vel > 0:
+                r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
+                r /= torch.linalg.norm(r, dim=-1, keepdim=True)
+                velocity[~reflected * in_prior] = velocity[~reflected * in_prior] * (1 + self.sigma_vel * r)
 
             # Update the number of points inside an outside
             n_out_steps += reflected.sum()

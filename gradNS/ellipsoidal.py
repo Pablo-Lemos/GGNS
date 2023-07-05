@@ -72,8 +72,9 @@ class EllipsoidalNS(NestedSampler):
             self.like_evals += 1
 
         sample = NSPoints(self.nparams)
-        sample.add_samples(values=values.reshape(1, -1),
-                           logL=newlike.reshape(1), #torch.tensor([newlike], dtype = dtype),
+        sample.add_samples(values=values.unsqueeze(0),
+                           logL=newlike.unsqueeze(0),
                            logweights=torch.ones(1, device=self.device))
 
         return sample
+
