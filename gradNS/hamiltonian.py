@@ -11,8 +11,8 @@ class HamiltonianNS(DynamicNestedSampler):
     """
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=5, max_reflections=10,
-                 sigma_vel=5e-2, clustering=False, verbose=True, device=None):
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.2, min_reflections=5, max_reflections=10,
+                 sigma_vel=0., clustering=False, verbose=True, device=None):
         super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
 
         # Initial time step size (it will be adapted)
@@ -50,6 +50,9 @@ class HamiltonianNS(DynamicNestedSampler):
         logl_ls = []
         mask = []
 
+        # A list of the reflections
+        memory = torch.zeros((position.shape[0], 3), dtype=torch.bool, device=self.device)
+
         # The initial position is the first point
         x = position.clone()
 
@@ -67,11 +70,19 @@ class HamiltonianNS(DynamicNestedSampler):
             # Check if the point is inside the slice
             reflected = p_x <= min_like
 
+            outside = reflected + ~in_prior
+            memory[:, 0] = memory[:, 1]
+            memory[:, 1] = memory[:, 2]
+            memory[:, 2] = outside
+
+            # Kill the points that have been reflected more than 3 times in a row
+            killed = torch.sum(memory, dim=1) == 3
+
             # If the point is inside the slice, update the velocity
             normal = grad_p_x / torch.norm(grad_p_x, dim=1, keepdim=True)
             normal = normal.to(dtype)
             delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
-            velocity[reflected + ~in_prior, :] -= delta_velocity[reflected + ~in_prior, :]
+            velocity[outside, :] -= delta_velocity[outside, :]
 
             # Update the number of positions
             num_reflections += reflected.clone()
@@ -79,12 +90,12 @@ class HamiltonianNS(DynamicNestedSampler):
                 # If the point has reached the minimum number of reflections, save it
                 pos_ls.append(x.clone())
                 logl_ls.append(p_x.clone())
-                mask.append(~reflected * in_prior)
+                mask.append(~outside.clone())
 
             if self.prior is not None:
-                r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
+                r = torch.randn_like(velocity[~outside], dtype=dtype, device=self.device)
                 #velocity[~reflected * in_prior] = velocity[~reflected * in_prior] + self.dt * self.prior(x[~reflected * in_prior]) + 2**0.5 * r
-                velocity[~reflected * in_prior] = self.dt * self.prior(x[~reflected * in_prior]) + 2 ** 0.5 * r
+                velocity[~outside] = self.dt * self.prior(x[~outside]) + 2 ** 0.5 * r
             # else:
             #     r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
             #     velocity[~reflected * in_prior] = 2 ** 0.5 * r
@@ -93,11 +104,11 @@ class HamiltonianNS(DynamicNestedSampler):
             if self.sigma_vel > 0:
                 r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
                 r /= torch.linalg.norm(r, dim=-1, keepdim=True)
-                velocity[~reflected * in_prior] = velocity[~reflected * in_prior] * (1 + self.sigma_vel * r)
+                velocity[~outside] = velocity[~outside] * (1 + self.sigma_vel * r)
 
             # Update the number of points inside an outside
-            n_out_steps += reflected.sum()
-            n_in_steps += (~reflected).sum()
+            n_out_steps += (outside * ~killed).sum()
+            n_in_steps += (~outside * ~killed).sum()
 
         # Fraction of points outside the slice
         out_frac = n_out_steps / (n_out_steps + n_in_steps)
@@ -184,6 +195,8 @@ class HamiltonianNS(DynamicNestedSampler):
                 in_prior = self.is_in_prior(new_x)
                 # Count the number of points that have not been accepted
                 active = (new_loglike < min_loglike) + (~in_prior)
+                if self.verbose and torch.sum(active) > 0:
+                    print(f"Active: {torch.sum(active).item()} / {len(active)}")
 
             accepted = torch.sum(active) == 0
             # if not accepted:
