@@ -11,7 +11,7 @@ class HamiltonianNS(DynamicNestedSampler):
     """
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
-    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.2, min_reflections=5, max_reflections=10,
+    def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=1, max_reflections=3,
                  sigma_vel=0., clustering=False, verbose=True, device=None):
         super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
 
@@ -96,9 +96,9 @@ class HamiltonianNS(DynamicNestedSampler):
                 r = torch.randn_like(velocity[~outside], dtype=dtype, device=self.device)
                 #velocity[~reflected * in_prior] = velocity[~reflected * in_prior] + self.dt * self.prior(x[~reflected * in_prior]) + 2**0.5 * r
                 velocity[~outside] = self.dt * self.prior(x[~outside]) + 2 ** 0.5 * r
-            # else:
-            #     r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
-            #     velocity[~reflected * in_prior] = 2 ** 0.5 * r
+                # else:
+                #     r = torch.randn_like(velocity[~outside], dtype=dtype, device=self.device)
+                #     velocity[~outside] = self.dt + 2 ** 0.5 * r
 
             # If sigma > 0, add noise to the velocity of non-reflected points
             if self.sigma_vel > 0:
@@ -183,11 +183,11 @@ class HamiltonianNS(DynamicNestedSampler):
             new_loglike[active] = new_loglike_active#.to(dtype)
 
             # Adapt time step if there are too many, ot not enough reflections
-            if (out_frac > 0.2) and (torch.sum(active).item() > len(active) // 2):
+            if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 0.9, 1e-5, 10)
                 if self.verbose: print("Decreasing dt to ", self.dt)
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
-            elif (out_frac < 0.05) and (torch.sum(active).item() > len(active) // 2):
+            elif (out_frac < 0.01) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 1.1, 1e-5, 10)
                 if self.verbose: print("Increasing dt to ", self.dt)
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)

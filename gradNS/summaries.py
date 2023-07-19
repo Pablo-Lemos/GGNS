@@ -69,6 +69,16 @@ class NestedSamplingSummaries:
         """
         return self.logXp
 
+    def get_logX(self):
+        """
+        Returns the current value of logX
+        Returns
+        -------
+        logX : torch.Tensor
+            Current value of logX
+        """
+        return torch.logsumexp(self.logXp, 0)
+
     def get_mean_logZ(self):
         """
         Returns the current value of the mean of logZ

@@ -10,7 +10,9 @@ import time
 from gradNS.utils import uniform, gmm_bic, get_knn_clusters
 from gradNS.param import Param, NSPoints
 from gradNS.summaries import NestedSamplingSummaries
-from getdist import MCSamples
+from getdist import MCSamples, plots
+import anesthetic
+from math import log10, log
 
 # Default floating point type
 dtype = torch.float64
@@ -101,6 +103,7 @@ class NestedSampler:
         self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
         self.n_accepted = 0
         self.prior = None
+        self.xlogL = torch.tensor([-1e30], device=self.device)
 
         self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
@@ -167,7 +170,8 @@ class NestedSampler:
         # Placeholder weights (will be calculated when the point is killed)
         logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
         points = NSPoints(self.nparams)
-        points.add_samples(values=prior_samples, logweights=logweights, logL=logL)
+        points.add_samples(values=prior_samples, logweights=logweights, logL=logL,
+                           logL_birth=-1e30*torch.ones_like(logL, dtype=dtype, device=self.device))
 
         # Count likelihood evaluations
         self.like_evals += npoints
@@ -407,6 +411,9 @@ class NestedSampler:
         """
         # Add a new sample
         newsample = self.find_new_sample(min_logL)
+        newsample.logL_birth = min_logL
+        self.xlogL = torch.cat((self.xlogL, min_logL + self.summaries.get_logX()))
+        #print(self.xlogL)
         assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
 
         self.live_points.add_nspoint(newsample)
@@ -476,13 +483,19 @@ class NestedSampler:
 
         # Run the algorithm
         max_epsilon = 1e1000
+        curr_xlogL = 0.
+        converged = False
 
         # From printing and clustering updates
         prev_multiple = 0
 
         nsteps = 0
-        while (self.n_clusters > 0 and max_epsilon > self.tol):
+        #while (self.n_clusters > 0 and max_epsilon > self.tol):
+        while ((self.n_clusters > 0) and (not converged)):
             self.move_one_step()
+            curr_xlogL = self.xlogL[-1] - torch.max(self.xlogL)
+            #print(curr_xlogL)
+            converged = curr_xlogL < log(self.tol)
             epsilon = self._get_epsilon()
             max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
 
@@ -497,7 +510,7 @@ class NestedSampler:
                 if self.verbose:
                     logZ_mean = self.get_mean_logZ()
                     print('---------------------------------------------')
-                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}')
+                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}, {curr_xlogL.item() :.4e}')
                     if self.clustering:
                         cluster_volumes = torch.exp(self.summaries.get_logXp()).detach().numpy()
                         volume_fractions = cluster_volumes / cluster_volumes.sum()
@@ -512,6 +525,13 @@ class NestedSampler:
         run_time = time.time() - start_time
 
         self.terminate(run_time)
+
+    def convert_to_anesthetic(self):
+        return anesthetic.NestedSamples(data=self.dead_points.get_values().detach().numpy(),
+                                        logL=self.dead_points.get_logL().detach().numpy(),
+                                        logL_birth=self.dead_points.get_logL_birth().detach().numpy(),
+                                        columns=self.paramnames,
+                                        labels=self.paramlabels)
 
     def convert_to_getdist(self):
         """ Converts the output of the algorithm to a Getdist samples object, for
