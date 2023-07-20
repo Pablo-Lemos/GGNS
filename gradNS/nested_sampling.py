@@ -147,7 +147,8 @@ class NestedSampler:
                     prior_samples[:,i] = uniform(low=param.prior[0],
                                                  high=param.prior[1],
                                                  size=npoints,
-                                                 dtype=dtype)
+                                                 dtype=dtype,
+                                                 device=device)
                 # elif param.prior_type == 'Gaussian':
                 #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
                 #                                       std=param.prior[1],
