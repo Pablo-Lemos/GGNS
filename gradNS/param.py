@@ -72,16 +72,15 @@ class NSPoints:
         device : torch.device
             Device to use. Defaults to GPU if available
         """
-        if device is None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device is None else device
 
         self.nparams = nparams
-        self.values = torch.zeros([0, self.nparams], device=device)
-        self.logweights = torch.zeros(size=(0,), device=device)
-        self.logL = torch.ones(size=(0,), device=device)
-        self.logL_birth = torch.ones(size=(0,), device=device)
+        self.values = torch.zeros([0, self.nparams], device=self.device)
+        self.logweights = torch.zeros(size=(0,), device=self.device)
+        self.logL = torch.ones(size=(0,), device=self.device)
+        self.logL_birth = torch.ones(size=(0,), device=self.device)
         self.currSize = 0
-        self.labels = torch.zeros(size=(0,), device=device, dtype=torch.int64)
+        self.labels = torch.zeros(size=(0,), device=self.device, dtype=torch.int64)
 
     def add_samples(self, values, logL, logweights, labels=None, logL_birth=None):
         """
@@ -125,7 +124,7 @@ class NSPoints:
         Returns
         -------
         """
-        assert isinstance(nspoint, NSPoints), "Inputs must be NSpoint"
+        #assert isinstance(nspoint, NSPoints), "Inputs must be NSpoint"
         assert nspoint.nparams == self.nparams, "Wrong dimensions"
 
         self.values = torch.cat([self.values, nspoint.values], dim=0)
@@ -161,7 +160,7 @@ class NSPoints:
             The popped point
 
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[idx:idx+1],
                            logweights=self.logweights[idx:idx+1],
                            logL=self.logL[idx:idx+1],
@@ -184,7 +183,7 @@ class NSPoints:
             The popped point
         """
         self._sort()
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[:1],
                            logweights=self.logweights[:1],
                            logL=self.logL[:1],
@@ -221,7 +220,7 @@ class NSPoints:
 
         """
         idx = self.labels == label
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[idx],
                            logweights=self.logweights[idx],
                            logL=self.logL[idx],
@@ -244,7 +243,7 @@ class NSPoints:
         sample : NSPoints
             The subset of points
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
 
         # If all points have the same label
         if torch.unique(self.labels).shape[0] == 1:
@@ -276,7 +275,7 @@ class NSPoints:
         sample : NSPoints
             The subset of points
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         for label, n_samples in enumerate(n_samples_per_label):
             if n_samples > 0:
                 subset = self.label_subset(label)
@@ -327,7 +326,7 @@ class NSPoints:
             The subset of points
         """
         idx = self.labels == label
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[idx],
                            logweights=self.logweights[idx],
                            logL=self.logL[idx],

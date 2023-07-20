@@ -204,7 +204,7 @@ class HamiltonianNS(DynamicNestedSampler):
 
         assert torch.min(new_loglike) >= min_loglike, f"min_loglike = {min_loglike}, new_loglike = {new_loglike}"
         #if self.verbose: print(f"ACCEPTED")
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=new_x,
                            logL=new_loglike,
                            logweights=torch.zeros(new_loglike.shape[0], device=self.device),

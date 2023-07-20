@@ -87,7 +87,7 @@ class DynamicNestedSampler(NestedSampler):
         sample : NSPoints
             The new sample
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
 
         # In the base class, find the points "brute force"
         for _ in range(n_points):

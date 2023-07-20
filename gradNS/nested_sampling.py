@@ -93,8 +93,8 @@ class NestedSampler:
         self.nparams = len(params)
         self.paramnames = []
         self.paramlabels = []
-        self.dead_points = NSPoints(self.nparams)
-        self.live_points = NSPoints(self.nparams)
+        self.dead_points = NSPoints(self.nparams, device=self.device)
+        self.live_points = NSPoints(self.nparams, device=self.device)
         self.like_evals = 0
         self.verbose = verbose
         self.clustering = clustering
@@ -148,7 +148,7 @@ class NestedSampler:
                                                  high=param.prior[1],
                                                  size=npoints,
                                                  dtype=dtype,
-                                                 device=device)
+                                                 device=self.device)
                 # elif param.prior_type == 'Gaussian':
                 #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
                 #                                       std=param.prior[1],
@@ -170,7 +170,7 @@ class NestedSampler:
 
         # Placeholder weights (will be calculated when the point is killed)
         logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
-        points = NSPoints(self.nparams)
+        points = NSPoints(self.nparams, device=self.device)
         points.add_samples(values=prior_samples, logweights=logweights, logL=logL,
                            logL_birth=-1e30*torch.ones_like(logL, dtype=dtype, device=self.device))
 
