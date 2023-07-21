@@ -5,7 +5,18 @@ from numpy import bincount
 dtype = torch.float64
 
 class NestedSamplingSummaries:
+    """
+    A class to represent the summaries used in nested sampling
+    """
     def __init__(self, device=None):
+        """
+
+        Parameters
+        ----------
+        device : torch.device, optional
+            Device to use for the summaries. The default is None, in which case
+            the device is set to 'cuda' if available, otherwise 'cpu'.
+        """
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
 
         self.n_clusters = 1
@@ -28,23 +39,83 @@ class NestedSamplingSummaries:
         self.dead_logXp = torch.empty(0, device=self.device)
 
     def get_logZ(self):
+        """
+        Returns the current value of logZ
+        Returns
+        -------
+        logZ : torch.Tensor
+            Current value of logZ
+        """
         return self.logZ
 
     def get_logZp(self):
+        """
+        Returns the current value of logZp
+        Returns
+        -------
+        logZp : torch.Tensor
+            Current value of logZp
+
+        """
         return self.logZp
 
     def get_logXp(self):
+        """
+        Returns the current value of logXp
+        Returns
+        -------
+        logXp : torch.Tensor
+            Current value of logXp
+        """
         return self.logXp
 
+    def get_logX(self):
+        """
+        Returns the current value of logX
+        Returns
+        -------
+        logX : torch.Tensor
+            Current value of logX
+        """
+        return torch.logsumexp(self.logXp, 0)
+
     def get_mean_logZ(self):
-        old_logZ = 2 * self.logZ - 0.5 * self.logZ2
-        return old_logZ
+        """
+        Returns the current value of the mean of logZ
+        Returns
+        -------
+        mean_logZ : torch.Tensor
+            Current value of the mean of logZ
+        """
+        mean_logZ = 2 * self.logZ - 0.5 * self.logZ2
+        return mean_logZ
 
     def get_var_logZ(self):
-        old_var_logZ = self.logZ2 - 2 * self.logZ
-        return old_var_logZ
+        """
+        Returns the current value of the variance of logZ
+        Returns
+        -------
+        var_logZ : torch.Tensor
+            Current value of the variance of logZ
+        """
+        var_logZ = self.logZ2 - 2 * self.logZ
+        return var_logZ
 
     def update(self, logL, label, np):
+        """
+        Update the summaries
+        Parameters
+        ----------
+        logL : torch.Tensor
+            Log likelihood
+        label : torch.Tensor
+            Label of the cluster
+        np : torch.Tensor
+            Number of points in the cluster
+
+        Returns
+        -------
+        """
         np = torch.as_tensor(np, dtype=torch.float64, device=self.device)
         # log Z
         self.logZ = torch.logsumexp(torch.cat([self.logZ.reshape(1),
@@ -55,7 +126,6 @@ class NestedSamplingSummaries:
         self.logZp[label] = torch.logsumexp(torch.cat([self.logZp[label].reshape(1),
                                                        logL + self.logXp[label] -
                                                        torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
-
 
         # log Z2
         self.logZ2 = torch.logsumexp(torch.cat([self.logZ2.reshape(1),
@@ -73,7 +143,6 @@ class NestedSamplingSummaries:
                                                                torch.as_tensor(2. / (np + 1.) / (np + 2.),
                                                                                device=self.device))
                                                         ]), 0)
-
 
         # log ZXp
         self.logZXp[label] = torch.logsumexp(
@@ -117,8 +186,19 @@ class NestedSamplingSummaries:
 
                 self.logXpXq[l, label] = self.logXpXq[label, l].clone()
 
-
     def split(self, cluster, labels):
+        """
+        Split a cluster into two clusters
+        Parameters
+        ----------
+        cluster : int
+            Cluster to split
+        labels : torch.Tensor
+            Labels of the points
+
+        Returns
+        -------
+        """
         n = len(labels)
         ns = bincount(labels)
         log_minus_inf = torch.log(torch.as_tensor(1e-1000, device=self.device))
@@ -183,6 +263,16 @@ class NestedSamplingSummaries:
         return new_labels
 
     def kill_cluster(self, idx):
+        """
+        Kill a cluster
+        Parameters
+        ----------
+        idx : int
+            Index of the cluster to kill
+
+        Returns
+        -------
+        """
         self.dead_logZp = torch.cat([self.dead_logZp, self.logZp[idx].unsqueeze(0)])
         self.dead_logXp = torch.cat([self.dead_logXp, self.logXp[idx].unsqueeze(0)])
 
@@ -198,6 +288,5 @@ class NestedSamplingSummaries:
 
         self.logXpXq = new_logXpXq
         self.n_clusters -= 1
-
 
 

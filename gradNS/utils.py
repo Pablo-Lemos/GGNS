@@ -64,8 +64,8 @@ def get_knn_clusters(x, max_components=None):
         sizes_prev = sizes
     return len(sizes), labels
 
-def uniform(low, high, size, dtype):
-    u = torch.rand(size, dtype = dtype)
+def uniform(low, high, size, dtype, device):
+    u = torch.rand(size, dtype=dtype, device=device)
     return u*(high-low)+low
 
 @torch.jit.script
