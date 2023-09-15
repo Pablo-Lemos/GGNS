@@ -1,5 +1,8 @@
+import gc
+
 import torch
 from numpy.random import randint, choice
+from gradNS.utils import save_to_file, read_from_file
 
 # Default floating point type
 dtype = torch.float64
@@ -112,6 +115,22 @@ class NSPoints:
         labels = torch.zeros(size=(values.shape[0],), device=values.device, dtype=torch.int64) if labels is None else labels
         self.labels = torch.cat([self.labels, labels], dim=0)
         self.currSize += values.shape[0]
+
+
+    def write_to_file(self, filename):
+        save_to_file(self.get_log_weights().reshape(-1, 1), f'{filename}_logweights.txt')
+        save_to_file(self.get_logL().reshape(-1, 1), f'{filename}_logL.txt')
+        save_to_file(self.get_values(), f'{filename}_values.txt')
+        save_to_file(self.get_labels().reshape(-1, 1), f'{filename}_labels.txt')
+        save_to_file(self.get_logL_birth().reshape(-1, 1), f'{filename}_logL_birth.txt')
+
+    def read_from_file(self, filename):
+        self.logweights = read_from_file(f'{filename}_logweights.txt').reshape(-1)
+        self.logL = read_from_file(f'{filename}_logL.txt').reshape(-1)
+        self.values = read_from_file(f'{filename}_values.txt')
+        self.labels = read_from_file(f'{filename}_labels.txt').reshape(-1)
+        self.logL_birth = read_from_file(f'{filename}_logL_birth.txt').reshape(-1)
+
 
     def add_nspoint(self, nspoint):
         """
@@ -334,6 +353,18 @@ class NSPoints:
                            labels=self.labels[idx])
         sample.currSize = self.logL[idx].shape[0]
         return sample
+
+    def empty(self):
+        """
+        Empty the sample
+        """
+        self.values = torch.zeros([0, self.nparams], device=self.device)
+        self.logweights = torch.zeros(size=(0,), device=self.device)
+        self.logL = torch.ones(size=(0,), device=self.device)
+        self.logL_birth = torch.ones(size=(0,), device=self.device)
+        self.currSize = 0
+        self.labels = torch.zeros(size=(0,), device=self.device, dtype=torch.int64)
+        gc.collect()
 
     def get_logL(self):
         self._sort()

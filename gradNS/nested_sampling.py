@@ -1,3 +1,5 @@
+#!/usr/bin/env pypy3
+
 '''
 This code creates a very Simple Nested Sampler (SNS), and applies to the examples of a unimodal and a bimodal Gaussian distribution in two dimensions. The nested sampler works, but is extremely inefficient, and to be used for pedagogic purposes. For an efficient nested sampler, I strongly recomment PolyChord (https://github.com/PolyChord/PolyChordLite)
 This code was written by Pablo Lemos (UCL)
@@ -7,12 +9,15 @@ March, 2020
 
 import torch
 import time
-from gradNS.utils import uniform, gmm_bic, get_knn_clusters
+from gradNS.utils import uniform, get_knn_clusters, save_to_file, read_from_file
 from gradNS.param import Param, NSPoints
 from gradNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples, plots
 import anesthetic
 from math import log10, log
+import gc
+import os
+import tracemalloc
 
 # Default floating point type
 dtype = torch.float64
@@ -107,6 +112,40 @@ class NestedSampler:
 
         self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
+
+    # def save(self, filename):
+    #     """
+    #     Save the current state of the sampler
+    #     Parameters
+    #     ----------
+    #     filename: str
+    #       The name of the file to save the sampler state to
+    #     """
+    #
+        # d = {'dead_points': self.dead_points,
+        #         'live_points': self.live_points,
+        #         'like_evals': self.like_evals,
+        #         'n_accepted': self.n_accepted,
+        #         'cluster_volumes': self.cluster_volumes,
+        #         'n_clusters': self.n_clusters,
+        #         'xlogL': self.xlogL,
+        #         'summaries': self.summaries}
+        #
+        # with open(filename, 'wb') as f:
+        #     pickle.dump(d, f)
+
+    # def load(self, filename):
+    #     with open(filename, 'rb') as f:
+    #         d = pickle.load(f)
+    #
+    #     self.dead_points = d['dead_points']
+    #     self.live_points = d['live_points']
+    #     self.like_evals = d['like_evals']
+    #     self.n_accepted = d['n_accepted']
+    #     self.cluster_volumes = d['cluster_volumes']
+    #     self.n_clusters = d['n_clusters']
+    #     self.xlogL = d['xlogL']
+    #     self.summaries = d['summaries']
 
     def add_prior(self, prior):
         """
@@ -474,10 +513,11 @@ class NestedSampler:
             print('---------------------------------------------')
 
 
-    def run(self):
+    def run(self, write_to_file=False, filename=None):
         """ The main function of the algorithm. Runs the Nested sampler"""
 
         start_time = time.time()
+        tracemalloc.start()  # Start memory profiling
 
         # Generate live points
         self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini, initial_step=True))
@@ -490,10 +530,28 @@ class NestedSampler:
         # From printing and clustering updates
         prev_multiple = 0
 
+        if write_to_file and filename is None:
+            raise ValueError("Filename must be provided if write_to_file is True")
+
+        if os.path.exists(f'{filename}_values.txt'):
+            os.remove(f'{filename}_values.txt')
+            os.remove(f'{filename}_logweights.txt')
+            os.remove(f'{filename}_labels.txt')
+            os.remove(f'{filename}_logL.txt')
+            os.remove(f'{filename}_logL_birth.txt')
+
+
         nsteps = 0
-        #while (self.n_clusters > 0 and max_epsilon > self.tol):
         while ((self.n_clusters > 0) and (not converged)):
+            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
+            # print(f"Memory usage pre move: {current / 10 ** 6} MiB")
+
             self.move_one_step()
+            #gc.collect()
+
+            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
+            # print(f"Memory usage post move: {current / 10 ** 6} MiB")
+
             curr_xlogL = self.xlogL[-1] - torch.max(self.xlogL)
             #print(curr_xlogL)
             converged = curr_xlogL < log(self.tol)
@@ -504,6 +562,12 @@ class NestedSampler:
             #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
             #if self.verbose:
             if self.n_accepted >= next_multiple:
+                if write_to_file:
+                    self.dead_points.write_to_file(f'{filename}')
+                    #del self.dead_points
+                    #self.dead_points = NSPoints(self.nparams, device=self.device)
+                    self.dead_points.empty()
+                    #gc.collect()
                 prev_multiple = next_multiple
                 if self.clustering:
                     self.find_clusters()
@@ -525,7 +589,14 @@ class NestedSampler:
 
         run_time = time.time() - start_time
 
+        if write_to_file:
+            self.dead_points.write_to_file(f'{filename}')
+            self.dead_points.read_from_file(f'{filename}')
+
         self.terminate(run_time)
+
+        if write_to_file:
+            self.dead_points.write_to_file(f'{filename}.txt')
 
     def convert_to_anesthetic(self):
         return anesthetic.NestedSamples(data=self.dead_points.get_values().detach().numpy(),
