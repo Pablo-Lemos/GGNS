@@ -229,11 +229,13 @@ class HamiltonianNS(DynamicNestedSampler):
             # Adapt time step if there are too many, ot not enough reflections
             if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 0.9, 1e-5, 10)
-                if self.verbose: print("Decreasing dt to ", self.dt)
+                if self.verbose: print("Decreasing dt to ", self.dt,
+                                       "out_frac = ", out_frac, "active = ", torch.sum(active).item())
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
             elif (out_frac < 0.01) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 1.1, 1e-5, 10)
-                if self.verbose: print("Increasing dt to ", self.dt)
+                if self.verbose: print("Increasing dt to ", self.dt,
+                                       "out_frac = ", out_frac, "active = ", torch.sum(active).item())
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
             else:
                 in_prior = self.is_in_prior(new_x)
