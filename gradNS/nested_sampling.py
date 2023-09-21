@@ -107,6 +107,7 @@ class NestedSampler:
         self.summaries = NestedSamplingSummaries(device=self.device)
         self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
         self.n_accepted = 0
+        self.n_tried = 0
         self.prior = None
         self.xlogL = torch.tensor([-1e30], device=self.device)
 
@@ -377,6 +378,7 @@ class NestedSampler:
         while newlike < min_like:
             newsample = self.sample_prior(npoints=1)
             newlike = newsample.get_logL()[0]
+            self.n_tried += 1
 
         return newsample
 

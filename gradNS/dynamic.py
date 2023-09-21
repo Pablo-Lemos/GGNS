@@ -14,6 +14,8 @@ class DynamicNestedSampler(NestedSampler):
         kill half of them and replace them with new samples from the prior. This is done until the tolerance is reached.
         """
         super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
+        self.n_accepted_pure_ns = 0
+        self.frac_pure_ns = 1.
 
     def move_one_step(self):
         """
@@ -21,6 +23,14 @@ class DynamicNestedSampler(NestedSampler):
 
         If using clustering, we kill points and assign a label, then add new points with the same label.
         """
+        while self.frac_pure_ns > 0.01:
+            sample = self.kill_point()
+            self.add_point(min_logL=sample.get_logL())
+            self.n_accepted_pure_ns += 1
+            self.frac_pure_ns = self.n_accepted_pure_ns / self.n_tried
+
+        print(f"Finished pure NS, number of points: {self.n_accepted_pure_ns}")
+
         if self.n_clusters == 1:
             n_points = self.nlive_ini//2
             for _ in range(n_points):
