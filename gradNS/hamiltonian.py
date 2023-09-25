@@ -14,8 +14,8 @@ class HamiltonianNS(DynamicNestedSampler):
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=1, max_reflections=3,
-                 sigma_vel=0., clustering=False, verbose=True, device=None):
-        super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
+                 sigma_vel=0., pure_ns=0.1, clustering=False, verbose=True, device=None):
+        super().__init__(loglike, params, nlive, tol, pure_ns, clustering, verbose, device)
 
         # Initial time step size (it will be adapted)
         self.dt = dt_ini

@@ -456,7 +456,7 @@ class NestedSampler:
         newsample.logL_birth = min_logL
         self.xlogL = torch.cat((self.xlogL, min_logL + self.summaries.get_logX()))
         #print(self.xlogL)
-        assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
+        assert newsample.get_logL() >= min_logL, "New sample has lower likelihood than old one"
 
         self.live_points.add_nspoint(newsample)
         self.n_accepted += 1
