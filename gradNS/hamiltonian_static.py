@@ -62,7 +62,12 @@ class HamiltonianStaticNS(NestedSampler):
         d = torch.randn_like(x, dtype=dtype, device=self.device)
         velocity = d / torch.linalg.norm(d, dim=1, keepdim=True)
 
-        for _ in range(self.n_repeats):
+        pts = torch.zeros((0, self.nparams), dtype=dtype, device=self.device)
+        min_reflections = 3
+        max_reflections = 5
+        num_reflections = 0
+
+        while num_reflections < max_reflections:
             x += velocity * self.dt
 
             # Check if the point is inside the prior
@@ -81,13 +86,22 @@ class HamiltonianStaticNS(NestedSampler):
                 delta_velocity = 2 * torch.einsum('ai, ai -> a', velocity, normal).reshape(-1, 1) * normal
                 velocity -= delta_velocity
                 self.n_out += 1
+                num_reflections += 1
             else:
                 r = torch.randn_like(velocity, dtype=dtype, device=self.device)
                 r /= torch.linalg.norm(r, dim=-1, keepdim=True)
                 velocity = velocity * (1 + 0.05 * r)
                 self.n_in += 1
 
-        return x, p_x
+            if num_reflections >= min_reflections and ~outside:
+                pts = torch.cat((pts, x.reshape(1, -1)), dim=0)
+
+        # Choose a new point from the points that were inside the slice
+        if pts.shape[0] == 0:
+            return initial_x, log_slice_height - 1
+        final_x = pts[torch.randint(pts.shape[0], (1,))]
+        p_x, grad_p_x = self.get_score(final_x)
+        return final_x, p_x
 
     def find_new_sample(self, min_like):
         """

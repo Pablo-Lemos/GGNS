@@ -67,9 +67,12 @@ class HamiltonianNS(DynamicNestedSampler):
         original_indices = list(range(position.shape[0]))  # Create a list of original indices
         killed_indices = []  # Create an empty list to store the indices of killed points
 
+        num_steps = 0
+        start_saving = False
         # The algorithm stops when the point with the smallest number of reflections has reached the
         # maximum number of reflections
-        while torch.min(num_reflections) < self.max_reflections:
+        while (torch.min(num_reflections) < self.max_reflections) and (num_steps < self.max_reflections * 100):
+            num_steps += 1
             # Update position with Euler step
             x += velocity * self.dt
 
@@ -119,6 +122,7 @@ class HamiltonianNS(DynamicNestedSampler):
             # Update the number of positions
             num_reflections += reflected
             if torch.min(num_reflections) > self.min_reflections:
+                start_saving = True
                 pos_tensor = torch.cat((pos_tensor, x.unsqueeze(0).clone()), dim=0)
                 logl_tensor = torch.cat((logl_tensor, p_x.clone().reshape(1, -1)), dim=0)
                 mask_tensor = torch.cat((mask_tensor, ~outside.clone().reshape(1, -1)), dim=0)
@@ -133,11 +137,39 @@ class HamiltonianNS(DynamicNestedSampler):
                 velocity[~outside] = velocity[~outside] * (1 + self.sigma_vel * r)
 
             # Update the number of points inside an outside
-            n_out_steps += (outside * ~killed).sum()
-            n_in_steps += (~outside * ~killed).sum()
+            #n_out_steps += (outside * ~killed).sum()
+            #n_in_steps += (~outside * ~killed).sum()
+            n_out_steps += outside.sum()
+            n_in_steps += (~outside).sum()
 
         # Fraction of points outside the slice
         out_frac = n_out_steps / (n_out_steps + n_in_steps)
+
+        if not start_saving:
+            x = x[~killed]
+            p_x = p_x[~killed]
+            num_reflections = num_reflections[~killed]
+            pos_tensor = pos_tensor[:, ~killed]
+            logl_tensor = logl_tensor[:, ~killed]
+            mask_tensor = mask_tensor[:, ~killed]
+            killed = killed[~killed]
+
+            killed = num_reflections < self.min_reflections
+            # Get the indices of killed points and remove them from the original_indices list
+            killed_idx = torch.where(killed)[0].tolist()
+            killed_indices.extend([original_indices[idx] for idx in killed_idx])
+            original_indices = [i for j, i in enumerate(original_indices) if j not in killed_idx]
+
+            x = x[~killed]
+            p_x = p_x[~killed]
+            pos_tensor = pos_tensor[:, ~killed]
+            logl_tensor = logl_tensor[:, ~killed]
+            mask_tensor = mask_tensor[:, ~killed]
+
+            pos_tensor = torch.cat((pos_tensor, x.unsqueeze(0).clone()), dim=0)
+            logl_tensor = torch.cat((logl_tensor, p_x.clone().reshape(1, -1)), dim=0)
+            mask_tensor = torch.cat((mask_tensor, torch.ones(1, x.shape[0], dtype=torch.bool, device=self.device)), dim=0)
+
 
         # If no point has reached the minimum number of reflections, return a point with zero likelihood
         if pos_tensor.shape[0] == 0:
@@ -240,13 +272,15 @@ class HamiltonianNS(DynamicNestedSampler):
             new_loglike[active] = new_loglike_active
 
             # Adapt time step if there are too many, ot not enough reflections
-            if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
-                self.dt = clip(self.dt * 0.9, 1e-5, 10)
+#            if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
+            if (out_frac > 0.15) and (torch.sum(active).item() > len(active) // 2):
+                self.dt = clip(self.dt * 0.5, 1e-5, 10)
                 if self.verbose: print("Decreasing dt to ", self.dt,
                                        "out_frac = ", out_frac, "active = ", torch.sum(active).item())
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
-            elif (out_frac < 0.01) and (torch.sum(active).item() > len(active) // 2):
-                self.dt = clip(self.dt * 1.1, 1e-5, 10)
+            elif (out_frac < 0.05) and (torch.sum(active).item() > len(active) // 2):
+            #elif (out_frac < 0.01) and (torch.sum(active).item() > len(active) // 2):
+                self.dt = clip(self.dt * 1.5, 1e-5, 10)
                 if self.verbose: print("Increasing dt to ", self.dt,
                                        "out_frac = ", out_frac, "active = ", torch.sum(active).item())
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
