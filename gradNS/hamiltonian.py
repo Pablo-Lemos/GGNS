@@ -14,8 +14,8 @@ class HamiltonianNS(DynamicNestedSampler):
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=1, max_reflections=3,
-                 sigma_vel=0., clustering=False, verbose=True, device=None):
-        super().__init__(loglike, params, nlive, tol, clustering, verbose, device)
+                 sigma_vel=0., pure_ns=0.1, clustering=False, verbose=True, device=None):
+        super().__init__(loglike, params, nlive, tol, pure_ns, clustering, verbose, device)
 
         # Initial time step size (it will be adapted)
         self.dt = dt_ini
@@ -62,6 +62,11 @@ class HamiltonianNS(DynamicNestedSampler):
         # The initial position is the first point
         x = position.clone()
 
+        killed = torch.zeros(position.shape[0], dtype=torch.bool, device=self.device)
+
+        original_indices = list(range(position.shape[0]))  # Create a list of original indices
+        killed_indices = []  # Create an empty list to store the indices of killed points
+
         # The algorithm stops when the point with the smallest number of reflections has reached the
         # maximum number of reflections
         while torch.min(num_reflections) < self.max_reflections:
@@ -72,6 +77,22 @@ class HamiltonianNS(DynamicNestedSampler):
             in_prior = self.is_in_prior(x)
             # Calculate the log-likelihood and its gradient
             p_x, grad_p_x = self.get_score(x)
+
+            x = x[~killed]
+            p_x = p_x[~killed]
+            grad_p_x = grad_p_x[~killed]
+            in_prior = in_prior[~killed]
+            velocity = velocity[~killed]
+            num_reflections = num_reflections[~killed]
+            memory = memory[~killed]
+            pos_tensor = pos_tensor[:, ~killed]
+            logl_tensor = logl_tensor[:, ~killed]
+            mask_tensor = mask_tensor[:, ~killed]
+            killed = killed[~killed]
+
+            if len(x) == 0:
+                return torch.zeros_like(position, dtype=dtype, device=self.device), \
+                       -1e30 * torch.ones(position.shape[0], dtype=dtype, device=self.device), 1
 
             # Check if the point is inside the slice
             reflected = p_x <= min_like
@@ -84,6 +105,11 @@ class HamiltonianNS(DynamicNestedSampler):
             # Kill the points that have been reflected more than 3 times in a row
             killed = torch.sum(memory, dim=1) == 3
 
+            # Get the indices of killed points and remove them from the original_indices list
+            killed_idx = torch.where(killed)[0].tolist()
+            killed_indices.extend([original_indices[idx] for idx in killed_idx])
+            original_indices = [i for j, i in enumerate(original_indices) if j not in killed_idx]
+
             # If the point is inside the slice, update the velocity
             normal = grad_p_x / torch.norm(grad_p_x, dim=1, keepdim=True)
             normal = normal.to(dtype)
@@ -93,24 +119,14 @@ class HamiltonianNS(DynamicNestedSampler):
             # Update the number of positions
             num_reflections += reflected
             if torch.min(num_reflections) > self.min_reflections:
-                # If the point has reached the minimum number of reflections, save it
-                # pos_ls.append(x.clone())
-                # logl_ls.append(p_x.clone())
-                # mask.append(~outside.clone())
-
                 pos_tensor = torch.cat((pos_tensor, x.unsqueeze(0).clone()), dim=0)
                 logl_tensor = torch.cat((logl_tensor, p_x.clone().reshape(1, -1)), dim=0)
                 mask_tensor = torch.cat((mask_tensor, ~outside.clone().reshape(1, -1)), dim=0)
 
             if self.prior is not None:
                 r = torch.randn_like(velocity[~outside], dtype=dtype, device=self.device)
-                #velocity[~reflected * in_prior] = velocity[~reflected * in_prior] + self.dt * self.prior(x[~reflected * in_prior]) + 2**0.5 * r
                 velocity[~outside] = self.dt * self.prior(x[~outside]) + 2 ** 0.5 * r
-                # else:
-                #     r = torch.randn_like(velocity[~outside], dtype=dtype, device=self.device)
-                #     velocity[~outside] = self.dt + 2 ** 0.5 * r
 
-            # If sigma > 0, add noise to the velocity of non-reflected points
             if self.sigma_vel > 0:
                 r = torch.randn_like(velocity[~reflected * in_prior], dtype=dtype, device=self.device)
                 r /= torch.linalg.norm(r, dim=-1, keepdim=True)
@@ -125,7 +141,7 @@ class HamiltonianNS(DynamicNestedSampler):
 
         # If no point has reached the minimum number of reflections, return a point with zero likelihood
         if pos_tensor.shape[0] == 0:
-            pos_out = torch.zeros_like(x)
+            pos_out = torch.zeros_like(x, dtype=dtype, device=self.device)
             logl_out = torch.tensor(-1e30, dtype=torch.float64) * torch.ones(position.shape[0], dtype=dtype, device=self.device)
         # Otherwise, return a random point from the list
         else:
@@ -135,40 +151,43 @@ class HamiltonianNS(DynamicNestedSampler):
             pos_out = torch.zeros(position.shape, dtype=dtype, device=self.device)
             logl_out = torch.zeros(position.shape[0], dtype=dtype, device=self.device)
 
-            for i in range(pos_tensor.shape[1]):
-                pos = pos_tensor[:, i, :]
-                ll = logl_tensor[:, i]
 
-                if torch.sum(mask_tensor[:, i]) == 0:
+            k = 0
+            for i in range(position.shape[0]):
+                if i in original_indices:
+                    pos = pos_tensor[:, k, :]
+                    ll = logl_tensor[:, k]
+
+                    if torch.sum(mask_tensor[:, k]) == 0:
+                        pos_out[i, :] = 0.
+                        logl_out[i] = -1e30
+                    else:
+                        pos = pos[mask_tensor[:, k]]
+                        ll = ll[mask_tensor[:, k]]
+                        idx = torch.randint(0, pos.shape[0], (1,))
+                        pos_out[i, :] = pos[idx, :].clone()
+                        logl_out[i] = ll[idx].clone()
+                    k += 1
+                else:
                     pos_out[i, :] = 0.
                     logl_out[i] = -1e30
-                else:
-                    pos = pos[mask_tensor[:, i]]
-                    ll = ll[mask_tensor[:, i]]
-                    idx = torch.randint(0, pos.shape[0], (1,))
-                    pos_out[i, :] = pos[idx, :].clone()
-                    logl_out[i] = ll[idx].clone()
 
         del delta_velocity
         del grad_p_x
         del in_prior
         del killed
-        del ll
-        # del logl_ls
         del logl_tensor
         # del loglikes
         # del mask
         # del masks
         del mask_tensor
         del memory
-        del min_like
         del n_in_steps
         del n_out_steps
         del normal
         del num_reflections
         del outside
         del p_x
-        del pos
         # del pos_ls
         del pos_tensor
         del position
@@ -214,17 +233,11 @@ class HamiltonianNS(DynamicNestedSampler):
             velocity = torch.randn_like(x_ini, dtype=dtype, device=self.device)
             velocity /= torch.linalg.norm(velocity, dim=-1, keepdim=True)
 
-            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
-            # print(f"Memory usage pre step: {current / 10 ** 6} MiB")
-
-            # Run Hamiltonian slice sampling
             new_x_active, new_loglike_active, out_frac = self.hamiltonian_slice_sampling(position=x_ini[active],
                                                                                          velocity=velocity[active],
-                                                                                         min_like=min_loglike,
-                                                                                         )
-
-            new_x[active] = new_x_active#.to(dtype)
-            new_loglike[active] = new_loglike_active#.to(dtype)
+                                                                                         min_like=min_loglike)
+            new_x[active] = new_x_active
+            new_loglike[active] = new_loglike_active
 
             # Adapt time step if there are too many, ot not enough reflections
             if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
@@ -247,18 +260,6 @@ class HamiltonianNS(DynamicNestedSampler):
                 del in_prior
 
             accepted = torch.sum(active) == 0
-
-            del new_x_active
-            del new_loglike_active
-            del velocity
-            #gc.collect()
-
-            # if not accepted:
-            #     if self.verbose: print(f"Active: {torch.sum(active).item()} / {len(active)}")
-
-            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
-            # print(f"Memory usage post step: {current / 10 ** 6} MiB")
-
 
         assert torch.min(new_loglike) >= min_loglike, f"min_loglike = {min_loglike}, new_loglike = {new_loglike}"
         #if self.verbose: print(f"ACCEPTED")
