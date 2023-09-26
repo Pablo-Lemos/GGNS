@@ -14,8 +14,7 @@ from gradNS.param import Param, NSPoints
 from gradNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples, plots
 import anesthetic
-from math import log10, log
-import gc
+from math import log
 import os
 import tracemalloc
 

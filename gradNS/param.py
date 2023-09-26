@@ -311,6 +311,7 @@ class NSPoints:
                                        logL_birth=subset.logL_birth[idx],
                                        labels=subset.labels[idx])
                 except IndexError:
+                    print(f"Error in get_samples_from_labels. n_samples = {n_samples}, subset.currSize = {subset.currSize}")
                     raise IndexError
 
         return sample
