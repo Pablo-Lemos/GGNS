@@ -14,7 +14,7 @@ class HamiltonianNS(DynamicNestedSampler):
     This Nested Sampler uses Dynamic Hamiltonian Slice Sampling.
     """
     def __init__(self, loglike, params, nlive=50, tol=0.1, dt_ini=0.1, min_reflections=1, max_reflections=3,
-                 sigma_vel=0., rejection_fraction=0.1, clustering=False, verbose=True, device=None):
+                 sigma_vel=0.05, rejection_fraction=0.1, clustering=False, verbose=True, device=None):
         super().__init__(loglike, params, nlive, tol, rejection_fraction, clustering, verbose, device)
 
         # Initial time step size (it will be adapted)
@@ -248,6 +248,7 @@ class HamiltonianNS(DynamicNestedSampler):
         # n_samples_per_label = torch.bincount(labels)
 
         point = self.live_points.get_samples_from_labels(labels)
+        ini_labels = point.get_labels() # bincount equal to labels
         x_ini = point.get_values()
 
         # Initalize arrays
@@ -273,12 +274,12 @@ class HamiltonianNS(DynamicNestedSampler):
 
             # Adapt time step if there are too many, ot not enough reflections
 #            if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
-            if (out_frac > 0.15) and (torch.sum(active).item() > len(active) // 2):
+            if (out_frac > 0.15) and (torch.sum(active).item() >= max(2, len(active) // 2)):
                 self.dt = clip(self.dt * 0.5, 1e-5, 10)
                 if self.verbose: print("Decreasing dt to ", self.dt,
                                        "out_frac = ", out_frac, "active = ", torch.sum(active).item())
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool)
-            elif (out_frac < 0.05) and (torch.sum(active).item() > len(active) // 2):
+            elif (out_frac < 0.05) and (torch.sum(active).item() >= max(2, len(active) // 2)):
             #elif (out_frac < 0.01) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 1.5, 1e-5, 10)
                 if self.verbose: print("Increasing dt to ", self.dt,
@@ -296,12 +297,11 @@ class HamiltonianNS(DynamicNestedSampler):
             accepted = torch.sum(active) == 0
 
         assert torch.min(new_loglike) >= min_loglike, f"min_loglike = {min_loglike}, new_loglike = {new_loglike}"
-        #if self.verbose: print(f"ACCEPTED")
         sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=new_x,
                            logL=new_loglike,
                            logweights=torch.zeros(new_loglike.shape[0], device=self.device),
-                           labels=point.get_labels()
+                           labels=ini_labels
                            )
 
         del new_x

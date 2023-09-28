@@ -40,21 +40,33 @@ class DynamicNestedSampler(NestedSampler):
             labels = torch.bincount(torch.zeros(n_points, device=self.device, dtype=torch.int))
             self.add_point_batch(min_logL=logl, n_points=n_points, labels=labels)
         else:
-            sample = self.kill_point()
-            new_labels = torch.zeros(self.n_clusters, dtype=torch.int)
-            cluster_volumes = torch.exp(self.summaries.get_logXp())
-            num_points = self.live_points.count_labels()
-            idx = torch.multinomial(cluster_volumes, 1)
-            new_labels[idx] += 1
-            while torch.min(num_points - new_labels) > 1:
+            n_points = self.nlive_ini // 2
+            for _ in range(n_points):
                 sample = self.kill_point()
-                cluster_volumes = torch.exp(self.summaries.get_logXp())
-                num_points = self.live_points.count_labels()
-                idx = torch.multinomial(cluster_volumes, 1)
-                new_labels[idx] += 1
+
+            cluster_volumes = torch.exp(self.summaries.get_logXp())
+            idx = torch.multinomial(cluster_volumes, n_points, replacement=True)
+            labels = torch.bincount(idx)
 
             logl = sample.get_logL().clone()
-            self.add_point_batch(min_logL=logl, n_points=torch.sum(new_labels).item(), labels=new_labels)
+            self.add_point_batch(min_logL=logl, n_points=n_points, labels=labels)
+            # sample = self.kill_point()
+            # new_labels = torch.zeros(self.n_clusters, dtype=torch.int)
+            # cluster_volumes = torch.exp(self.summaries.get_logXp())
+            # num_points = self.live_points.count_labels()
+            # idx = torch.multinomial(cluster_volumes, 1)
+            # new_labels[idx] += 1
+            # while torch.min(num_points - new_labels) > 1:
+            #     sample = self.kill_point()
+            #     cluster_volumes = torch.exp(self.summaries.get_logXp())
+            #     num_points = self.live_points.count_labels()
+            #     idx = torch.multinomial(cluster_volumes, 1)
+            #     new_labels[idx] += 1
+            #
+            # logl = sample.get_logL().clone()
+            # self.add_point_batch(min_logL=logl, n_points=torch.sum(new_labels).item(), labels=new_labels)
+
+            # IDEA: Try finding half the points based on initial cluster volumes
 
     def add_point_batch(self, min_logL, n_points, labels=None):
         """

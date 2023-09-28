@@ -1,6 +1,6 @@
 import torch
 from sklearn.mixture import GaussianMixture
-
+from collections import deque
 import os
 import csv
 

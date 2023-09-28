@@ -275,9 +275,10 @@ class NSPoints:
                                labels=self.labels[idx])
 
         else:
-            labels = torch.multinomial(volumes / torch.sum(volumes), num_samples=n_samples, replacement=True)
+            labels = torch.multinomial(volumes, num_samples=n_samples, replacement=True)
             # Calculate the number of samples to take from each label
             n_samples_per_label = torch.bincount(labels)
+            #print(f"n_samples_per_label: {n_samples_per_label}, live points per cluster, {torch.bincount(self.labels)}")
             sample = self.get_samples_from_labels(n_samples_per_label)
         return sample
 
@@ -301,8 +302,8 @@ class NSPoints:
                 if subset.get_size() <= 1:
                     idx = [0] * n_samples
                 else:
-                    assert n_samples <= subset.get_size(), "Number of samples must be less than the number of points in the subset"
-                    idx = choice(subset.currSize, n_samples.item(), replace=False)
+                    #assert n_samples <= subset.get_size(), "Number of samples must be less than the number of points in the subset"
+                    idx = choice(subset.currSize, n_samples.item(), replace=True)
 
                 try:
                     sample.add_samples(values=subset.values[idx],

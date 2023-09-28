@@ -1,10 +1,7 @@
 #!/usr/bin/env pypy3
 
 '''
-This code creates a very Simple Nested Sampler (SNS), and applies to the examples of a unimodal and a bimodal Gaussian distribution in two dimensions. The nested sampler works, but is extremely inefficient, and to be used for pedagogic purposes. For an efficient nested sampler, I strongly recomment PolyChord (https://github.com/PolyChord/PolyChordLite)
-This code was written by Pablo Lemos (UCL)
-pablo.lemos.18@ucl.ac.uk
-March, 2020
+Base Nested Sampler class
 '''
 
 import torch
@@ -14,7 +11,7 @@ from gradNS.param import Param, NSPoints
 from gradNS.summaries import NestedSamplingSummaries
 from getdist import MCSamples, plots
 import anesthetic
-from math import log
+from math import log, exp
 import os
 import tracemalloc
 
@@ -418,16 +415,16 @@ class NestedSampler:
         label = sample.get_labels().item()
         try:
             n_p = self.live_points.count_labels()[label]
-            kill_cluster = False
         except IndexError:
             n_p = 0
-            kill_cluster = True
+
+        kill_cluster = n_p == 0
 
         # Add one, as we have already removed the point
-        n_p = n_p + 1
         self.summaries.update(sample.get_logL(), label, n_p)
+        #n_p = n_p + 1
 
-        logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p, device=self.device))
+        logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p + 1, device=self.device))
         sample.logweights = logweight * torch.ones_like(sample.logweights, device=self.device)
         self.dead_points.add_nspoint(sample)
 
@@ -576,7 +573,7 @@ class NestedSampler:
                 if self.verbose:
                     logZ_mean = self.get_mean_logZ()
                     print('---------------------------------------------')
-                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}, {curr_xlogL.item() :.4e}')
+                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}, {exp(curr_xlogL.item()) :.4f}')
                     if self.clustering:
                         cluster_volumes = torch.exp(self.summaries.get_logXp()).detach().numpy()
                         volume_fractions = cluster_volumes / cluster_volumes.sum()
