@@ -575,9 +575,9 @@ class NestedSampler:
                     print('---------------------------------------------')
                     print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}, {exp(curr_xlogL.item()) :.4f}')
                     if self.clustering:
-                        cluster_volumes = torch.exp(self.summaries.get_logXp()).detach().numpy()
+                        cluster_volumes = torch.exp(self.summaries.get_logXp()).cpu().detach().numpy()
                         volume_fractions = cluster_volumes / cluster_volumes.sum()
-                        logZps = self.summaries.get_logZp().detach().numpy()
+                        logZps = self.summaries.get_logZp().cpu().detach().numpy()
                         print('---------------------------------------------')
                         for c in range(self.n_clusters):
                             if volume_fractions[c] > 1e-4:
@@ -597,9 +597,9 @@ class NestedSampler:
             self.dead_points.write_to_file(f'{filename}.txt')
 
     def convert_to_anesthetic(self):
-        return anesthetic.NestedSamples(data=self.dead_points.get_values().detach().numpy(),
-                                        logL=self.dead_points.get_logL().detach().numpy(),
-                                        logL_birth=self.dead_points.get_logL_birth().detach().numpy(),
+        return anesthetic.NestedSamples(data=self.dead_points.get_values().cpu().detach().numpy(),
+                                        logL=self.dead_points.get_logL().cpu().detach().numpy(),
+                                        logL_birth=self.dead_points.get_logL_birth().cpu().detach().numpy(),
                                         columns=self.paramnames,
                                         labels=self.paramlabels)
 
@@ -612,9 +612,9 @@ class NestedSampler:
           A getdist samples objects with the samples
         """
 
-        samples = self.dead_points.get_values().detach().numpy()
-        weights = self.dead_points.get_weights().detach().numpy()
-        loglikes = self.dead_points.get_logL().detach().numpy()
+        samples = self.dead_points.get_values().cpu().detach().numpy()
+        weights = self.dead_points.get_weights().cpu().detach().numpy()
+        loglikes = self.dead_points.get_logL().cpu().detach().numpy()
 
         getdist_samples = MCSamples(
             samples=samples,
