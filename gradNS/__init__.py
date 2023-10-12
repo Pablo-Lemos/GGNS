@@ -6,3 +6,4 @@ from .slice import SliceNS
 from .hamiltonian import HamiltonianNS
 from .hamiltonian_static import HamiltonianStaticNS
 from .dynamic import DynamicNestedSampler
+from .gfn import GFNNestedSampler
