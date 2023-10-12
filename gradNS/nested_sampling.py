@@ -382,7 +382,7 @@ class NestedSampler:
         """ Run a clustering algorithm to find how many clusters are present in the posterior
         """
         for i in range(self.n_clusters):
-            all_labels = self.live_points.get_labels().detach().numpy()
+            all_labels = self.live_points.get_labels().cpu().detach().numpy()
             x = self.live_points.get_cluster(i).get_values()
             if x.shape[0] < self.nlive_ini//self.nparams:
                 continue
