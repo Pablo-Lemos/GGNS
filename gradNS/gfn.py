@@ -96,7 +96,7 @@ class GFNNestedSampler(NestedSampler):
                 self.kill_point()
 
             self.live_points = NSPoints(nparams=self.nparams)
-            self.live_points.add_samples(values=live_points, logL=loglikes, logweights=torch.zeros(self.nlive_ini, dtype=dtype))
+            self.live_points.add_samples(values=live_points, logL=loglikes, logweights=torch.zeros(self.nlive_ini, dtype=dtype, device=self.device))
 
             # TODO: This isnt quite right, I should only change the logL_birth of the new points
             ##self.live_points.logL_birth [self.live_points.logL_birth == 1] = min_like * torch.ones(new_accepted, dtype=dtype)
