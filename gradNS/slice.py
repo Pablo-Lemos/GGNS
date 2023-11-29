@@ -122,7 +122,7 @@ class SliceNS(NestedSampler):
             new_value, new_loglike = self.slice_sampling(min_like, curr_value)
             curr_value = new_value.clone()
 
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=new_value.reshape(1, -1),
                            logL=new_loglike.reshape(1),
                            logweights=torch.zeros(1, device=self.device),

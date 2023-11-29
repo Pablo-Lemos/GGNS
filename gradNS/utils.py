@@ -1,6 +1,8 @@
 import torch
 from sklearn.mixture import GaussianMixture
 from collections import deque
+import os
+import csv
 
 def gmm_bic(X, max_components=None):
     curr_bic = 1e300
@@ -64,8 +66,8 @@ def get_knn_clusters(x, max_components=None):
         sizes_prev = sizes
     return len(sizes), labels
 
-def uniform(low, high, size, dtype):
-    u = torch.rand(size, dtype = dtype)
+def uniform(low, high, size, dtype, device):
+    u = torch.rand(size, dtype=dtype, device=device)
     return u*(high-low)+low
 
 @torch.jit.script
@@ -88,4 +90,30 @@ def linspace(start: torch.Tensor, stop: torch.Tensor, num: int):
     out = start[None] + steps * (stop - start)[None]
 
     return out
+
+def save_to_file(x, filename, verbose = False):
+    mode = 'a' if os.path.exists(filename) else 'w'
+    with open(filename, mode, newline='') as file:
+        writer = csv.writer(file)
+        writer.writerows(x.tolist())
+    if verbose:
+        print(f"Result saved to '{filename}' successfully.")
+
+def read_from_file(filename):
+    try:
+        with open(filename, 'r') as file:
+            reader = csv.reader(file)
+            data = list(reader)
+            if data:
+                x = torch.tensor([list(map(float, row)) for row in data])
+                print(f"Result loaded from '{filename}' successfully.")
+                return x
+            else:
+                print(f"File '{filename}' is empty.")
+                return None
+    except FileNotFoundError:
+        print(f"File '{filename}' not found.")
+    except ValueError:
+        print(f"Invalid data in '{filename}'. Unable to load the result.")
+
 

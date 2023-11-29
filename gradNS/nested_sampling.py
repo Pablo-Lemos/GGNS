@@ -1,19 +1,62 @@
+#!/usr/bin/env pypy3
+
 '''
-This code creates a very Simple Nested Sampler (SNS), and applies to the examples of a unimodal and a bimodal Gaussian distribution in two dimensions. The nested sampler works, but is extremely inefficient, and to be used for pedagogic purposes. For an efficient nested sampler, I strongly recomment PolyChord (https://github.com/PolyChord/PolyChordLite)
-This code was written by Pablo Lemos (UCL)
-pablo.lemos.18@ucl.ac.uk
-March, 2020
+Base Nested Sampler class
 '''
 
 import torch
 import time
-from gradNS.utils import uniform, gmm_bic, get_knn_clusters
+from gradNS.utils import uniform, get_knn_clusters, save_to_file, read_from_file
 from gradNS.param import Param, NSPoints
 from gradNS.summaries import NestedSamplingSummaries
-from getdist import MCSamples
+from getdist import MCSamples, plots
+import anesthetic
+from math import log, exp
+import os
+import tracemalloc
 
 # Default floating point type
 dtype = torch.float64
+
+class Prior():
+    """
+    A class to represent priors to be sampled
+    """
+
+    def __init__(self, score, sample):
+        """
+        Parameters
+        ----------
+        score : function
+            The score function
+        sample : function
+            The sampling function
+        """
+        assert callable(score), 'score must be a callable function'
+        assert callable(sample), 'sample must be a callable function'
+        self.score = score
+        self.sample = sample
+
+    def __call__(self, x):
+        """
+        Parameters
+        ----------
+        x : torch.Tensor
+            The point to evaluate the prior at
+        """
+
+        return self.score(x)
+
+    def sample(self, npoints):
+        """
+        Parameters
+        ----------
+        npoints : int
+            The number of points to sample
+        """
+
+        return self.sample(npoints)
+
 
 class NestedSampler:
     """
@@ -51,8 +94,8 @@ class NestedSampler:
         self.nparams = len(params)
         self.paramnames = []
         self.paramlabels = []
-        self.dead_points = NSPoints(self.nparams)
-        self.live_points = NSPoints(self.nparams)
+        self.dead_points = NSPoints(self.nparams, device=self.device)
+        self.live_points = NSPoints(self.nparams, device=self.device)
         self.like_evals = 0
         self.verbose = verbose
         self.clustering = clustering
@@ -60,9 +103,56 @@ class NestedSampler:
         self.summaries = NestedSamplingSummaries(device=self.device)
         self.cluster_volumes = torch.ones(self.n_clusters, device=self.device)
         self.n_accepted = 0
+        self.n_tried = 0
+        self.prior = None
+        self.xlogL = torch.tensor([-1e30], device=self.device)
 
         self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
+
+    # def save(self, filename):
+    #     """
+    #     Save the current state of the sampler
+    #     Parameters
+    #     ----------
+    #     filename: str
+    #       The name of the file to save the sampler state to
+    #     """
+    #
+        # d = {'dead_points': self.dead_points,
+        #         'live_points': self.live_points,
+        #         'like_evals': self.like_evals,
+        #         'n_accepted': self.n_accepted,
+        #         'cluster_volumes': self.cluster_volumes,
+        #         'n_clusters': self.n_clusters,
+        #         'xlogL': self.xlogL,
+        #         'summaries': self.summaries}
+        #
+        # with open(filename, 'wb') as f:
+        #     pickle.dump(d, f)
+
+    # def load(self, filename):
+    #     with open(filename, 'rb') as f:
+    #         d = pickle.load(f)
+    #
+    #     self.dead_points = d['dead_points']
+    #     self.live_points = d['live_points']
+    #     self.like_evals = d['like_evals']
+    #     self.n_accepted = d['n_accepted']
+    #     self.cluster_volumes = d['cluster_volumes']
+    #     self.n_clusters = d['n_clusters']
+    #     self.xlogL = d['xlogL']
+    #     self.summaries = d['summaries']
+
+    def add_prior(self, prior):
+        """
+        Parameters
+        ----------
+        prior : Prior
+            The prior to be added
+        """
+        assert isinstance(prior, Prior), 'Prior must be an instance of the Prior class'
+        self.prior = prior
 
     def sample_prior(self, npoints, initial_step=False):
         """ Produce samples from the prior distributions
@@ -83,23 +173,31 @@ class NestedSampler:
         # Create an empty list for the samples
         prior_samples = torch.zeros([npoints, self.nparams], dtype=dtype, device=self.device)
 
-        # Iterate over all parameters
-        for i, param in enumerate(self.params):
+        if self.prior is None:
+            # Iterate over all parameters
+            for i, param in enumerate(self.params):
+                if initial_step == True:
+                    self.paramnames.append(param.name)
+                    self.paramlabels.append(param.label)
+                if param.prior_type == 'Uniform':
+                    prior_samples[:,i] = uniform(low=param.prior[0],
+                                                 high=param.prior[1],
+                                                 size=npoints,
+                                                 dtype=dtype,
+                                                 device=self.device)
+                # elif param.prior_type == 'Gaussian':
+                #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
+                #                                       std=param.prior[1],
+                #                                       size=npoints,
+                #                                       device=self.device)
+                else:
+                    raise ValueError('Prior type not recognised, only Uniform is implemented for now')
+        else:
             if initial_step == True:
-                self.paramnames.append(param.name)
-                self.paramlabels.append(param.label)
-            if param.prior_type == 'Uniform':
-                prior_samples[:,i] = uniform(low=param.prior[0],
-                                             high=param.prior[1],
-                                             size=npoints,
-                                             dtype=dtype)
-            # elif param.prior_type == 'Gaussian':
-            #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
-            #                                       std=param.prior[1],
-            #                                       size=npoints,
-            #                                       device=self.device)
-            else:
-                raise ValueError('Prior type not recognised, only Uniform is implemented for now')
+                for i, param in enumerate(self.params):
+                    self.paramnames.append(param.name)
+                    self.paramlabels.append(param.label)
+            prior_samples = self.prior.sample(npoints)
 
         # Calculate log likelihood
         logL = torch.zeros(npoints, dtype=dtype, device=self.device)
@@ -108,8 +206,9 @@ class NestedSampler:
 
         # Placeholder weights (will be calculated when the point is killed)
         logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
-        points = NSPoints(self.nparams)
-        points.add_samples(values=prior_samples, logweights=logweights, logL=logL)
+        points = NSPoints(self.nparams, device=self.device)
+        points.add_samples(values=prior_samples, logweights=logweights, logL=logL,
+                           logL_birth=-1e30*torch.ones_like(logL, dtype=dtype, device=self.device))
 
         # Count likelihood evaluations
         self.like_evals += npoints
@@ -128,9 +227,12 @@ class NestedSampler:
         """
         assert len(x.shape) == 2
         assert x.shape[1] == self.nparams
-        in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * \
-                   (torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
-        return in_prior
+        if self.prior is None:
+            in_prior = (torch.min(x - self._lower, dim=-1)[0] >= torch.zeros(x.shape[0], dtype=dtype, device=self.device)) * \
+                       (torch.max(x - self._upper, dim=-1)[0] <= torch.zeros(x.shape[0], dtype=dtype, device=self.device))
+            return in_prior
+        else:
+            return torch.ones(x.shape[0], dtype=torch.bool, device=self.device)
 
     def get_score(self, theta):
         """ Calculate the score for a given point
@@ -272,6 +374,7 @@ class NestedSampler:
         while newlike < min_like:
             newsample = self.sample_prior(npoints=1)
             newlike = newsample.get_logL()[0]
+            self.n_tried += 1
 
         return newsample
 
@@ -312,16 +415,16 @@ class NestedSampler:
         label = sample.get_labels().item()
         try:
             n_p = self.live_points.count_labels()[label]
-            kill_cluster = False
         except IndexError:
             n_p = 0
-            kill_cluster = True
+
+        kill_cluster = n_p == 0
 
         # Add one, as we have already removed the point
-        n_p = n_p + 1
         self.summaries.update(sample.get_logL(), label, n_p)
+        #n_p = n_p + 1
 
-        logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p, device=self.device))
+        logweight = self.summaries.get_logXp()[label] - torch.log(torch.as_tensor(n_p + 1, device=self.device))
         sample.logweights = logweight * torch.ones_like(sample.logweights, device=self.device)
         self.dead_points.add_nspoint(sample)
 
@@ -346,7 +449,10 @@ class NestedSampler:
         """
         # Add a new sample
         newsample = self.find_new_sample(min_logL)
-        assert newsample.get_logL() > min_logL, "New sample has lower likelihood than old one"
+        newsample.logL_birth = min_logL
+        self.xlogL = torch.cat((self.xlogL, min_logL + self.summaries.get_logX()))
+        #print(self.xlogL)
+        assert newsample.get_logL() >= min_logL, "New sample has lower likelihood than old one"
 
         self.live_points.add_nspoint(newsample)
         self.n_accepted += 1
@@ -405,23 +511,48 @@ class NestedSampler:
             print('---------------------------------------------')
 
 
-    def run(self):
+    def run(self, write_to_file=False, filename=None):
         """ The main function of the algorithm. Runs the Nested sampler"""
 
         start_time = time.time()
+        tracemalloc.start()  # Start memory profiling
 
         # Generate live points
         self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini, initial_step=True))
 
         # Run the algorithm
         max_epsilon = 1e1000
+        curr_xlogL = 0.
+        converged = False
 
         # From printing and clustering updates
         prev_multiple = 0
 
+        if write_to_file and filename is None:
+            raise ValueError("Filename must be provided if write_to_file is True")
+
+        if os.path.exists(f'{filename}_values.txt'):
+            os.remove(f'{filename}_values.txt')
+            os.remove(f'{filename}_logweights.txt')
+            os.remove(f'{filename}_labels.txt')
+            os.remove(f'{filename}_logL.txt')
+            os.remove(f'{filename}_logL_birth.txt')
+
+
         nsteps = 0
-        while (self.n_clusters > 0 and max_epsilon > self.tol):
+        while ((self.n_clusters > 0) and (not converged)):
+            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
+            # print(f"Memory usage pre move: {current / 10 ** 6} MiB")
+
             self.move_one_step()
+            #gc.collect()
+
+            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
+            # print(f"Memory usage post move: {current / 10 ** 6} MiB")
+
+            curr_xlogL = self.xlogL[-1] - torch.max(self.xlogL)
+            #print(curr_xlogL)
+            converged = curr_xlogL < log(self.tol)
             epsilon = self._get_epsilon()
             max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
 
@@ -429,6 +560,12 @@ class NestedSampler:
             #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
             #if self.verbose:
             if self.n_accepted >= next_multiple:
+                if write_to_file:
+                    self.dead_points.write_to_file(f'{filename}')
+                    #del self.dead_points
+                    #self.dead_points = NSPoints(self.nparams, device=self.device)
+                    self.dead_points.empty()
+                    #gc.collect()
                 prev_multiple = next_multiple
                 if self.clustering:
                     self.find_clusters()
@@ -436,7 +573,7 @@ class NestedSampler:
                 if self.verbose:
                     logZ_mean = self.get_mean_logZ()
                     print('---------------------------------------------')
-                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}')
+                    print(f'logZ = {logZ_mean :.4f}, eps = {max_epsilon.item() :.4e}, {exp(curr_xlogL.item()) :.4f}')
                     if self.clustering:
                         cluster_volumes = torch.exp(self.summaries.get_logXp()).detach().numpy()
                         volume_fractions = cluster_volumes / cluster_volumes.sum()
@@ -450,7 +587,21 @@ class NestedSampler:
 
         run_time = time.time() - start_time
 
+        if write_to_file:
+            self.dead_points.write_to_file(f'{filename}')
+            self.dead_points.read_from_file(f'{filename}')
+
         self.terminate(run_time)
+
+        if write_to_file:
+            self.dead_points.write_to_file(f'{filename}.txt')
+
+    def convert_to_anesthetic(self):
+        return anesthetic.NestedSamples(data=self.dead_points.get_values().detach().numpy(),
+                                        logL=self.dead_points.get_logL().detach().numpy(),
+                                        logL_birth=self.dead_points.get_logL_birth().detach().numpy(),
+                                        columns=self.paramnames,
+                                        labels=self.paramlabels)
 
     def convert_to_getdist(self):
         """ Converts the output of the algorithm to a Getdist samples object, for

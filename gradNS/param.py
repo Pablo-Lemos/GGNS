@@ -1,5 +1,8 @@
+import gc
+
 import torch
 from numpy.random import randint, choice
+from gradNS.utils import save_to_file, read_from_file
 
 # Default floating point type
 dtype = torch.float64
@@ -72,17 +75,17 @@ class NSPoints:
         device : torch.device
             Device to use. Defaults to GPU if available
         """
-        if device is None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device is None else device
 
         self.nparams = nparams
-        self.values = torch.zeros([0, self.nparams], device=device)
-        self.logweights = torch.zeros(size=(0,), device=device)
-        self.logL = torch.ones(size=(0,), device=device)
+        self.values = torch.zeros([0, self.nparams], device=self.device)
+        self.logweights = torch.zeros(size=(0,), device=self.device)
+        self.logL = torch.ones(size=(0,), device=self.device)
+        self.logL_birth = torch.ones(size=(0,), device=self.device)
         self.currSize = 0
-        self.labels = torch.zeros(size=(0,), device=device, dtype=torch.int64)
+        self.labels = torch.zeros(size=(0,), device=self.device, dtype=torch.int64)
 
-    def add_samples(self, values, logL, logweights, labels=None):
+    def add_samples(self, values, logL, logweights, labels=None, logL_birth=None):
         """
         Add samples to the set
         Parameters
@@ -107,9 +110,27 @@ class NSPoints:
         self.values = torch.cat([self.values, values], dim=0)
         self.logL = torch.cat([self.logL, logL], dim=0)
         self.logweights = torch.cat([self.logweights, logweights], dim=0)
+        logL_birth = torch.zeros_like(logL, device=values.device) if logL_birth is None else logL_birth
+        self.logL_birth = torch.cat([self.logL_birth, logL_birth], dim=0)
         labels = torch.zeros(size=(values.shape[0],), device=values.device, dtype=torch.int64) if labels is None else labels
         self.labels = torch.cat([self.labels, labels], dim=0)
         self.currSize += values.shape[0]
+
+
+    def write_to_file(self, filename):
+        save_to_file(self.get_log_weights().reshape(-1, 1), f'{filename}_logweights.txt')
+        save_to_file(self.get_logL().reshape(-1, 1), f'{filename}_logL.txt')
+        save_to_file(self.get_values(), f'{filename}_values.txt')
+        save_to_file(self.get_labels().reshape(-1, 1), f'{filename}_labels.txt')
+        save_to_file(self.get_logL_birth().reshape(-1, 1), f'{filename}_logL_birth.txt')
+
+    def read_from_file(self, filename):
+        self.logweights = read_from_file(f'{filename}_logweights.txt').reshape(-1)
+        self.logL = read_from_file(f'{filename}_logL.txt').reshape(-1)
+        self.values = read_from_file(f'{filename}_values.txt')
+        self.labels = read_from_file(f'{filename}_labels.txt').reshape(-1)
+        self.logL_birth = read_from_file(f'{filename}_logL_birth.txt').reshape(-1)
+
 
     def add_nspoint(self, nspoint):
         """
@@ -122,11 +143,12 @@ class NSPoints:
         Returns
         -------
         """
-        assert isinstance(nspoint, NSPoints), "Inputs must be NSpoint"
+        #assert isinstance(nspoint, NSPoints), "Inputs must be NSpoint"
         assert nspoint.nparams == self.nparams, "Wrong dimensions"
 
         self.values = torch.cat([self.values, nspoint.values], dim=0)
         self.logL = torch.cat([self.logL, nspoint.logL], dim=0)
+        self.logL_birth = torch.cat([self.logL_birth, nspoint.logL_birth], dim=0)
         self.logweights = torch.cat([self.logweights, nspoint.logweights], dim=0)
         self.labels = torch.cat([self.labels, nspoint.labels], dim=0)
         self.currSize += nspoint.currSize
@@ -138,6 +160,7 @@ class NSPoints:
         -------
         """
         self.logL, indices = torch.sort(self.logL)
+        self.logL_birth = self.logL_birth[indices]
         self.logweights = self.logweights[indices]
         self.values = self.values[indices]
         self.labels = self.labels[indices]
@@ -156,7 +179,7 @@ class NSPoints:
             The popped point
 
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[idx:idx+1],
                            logweights=self.logweights[idx:idx+1],
                            logL=self.logL[idx:idx+1],
@@ -165,6 +188,7 @@ class NSPoints:
         self.values = torch.cat([self.values[:idx], self.values[idx+1:]], dim=0)
         self.logweights = torch.cat([self.logweights[:idx], self.logweights[idx+1:]], dim=0)
         self.logL = torch.cat([self.logL[:idx], self.logL[idx+1:]], dim=0)
+        self.logL_birth = torch.cat([self.logL_birth[:idx], self.logL_birth[idx+1:]], dim=0)
         self.labels = torch.cat([self.labels[:idx], self.labels[idx+1:]], dim=0)
         self.currSize -= 1
         return sample
@@ -178,13 +202,15 @@ class NSPoints:
             The popped point
         """
         self._sort()
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[:1],
                            logweights=self.logweights[:1],
                            logL=self.logL[:1],
+                           logL_birth=self.logL_birth[:1],
                            labels=self.labels[:1])
-        self.values, self.logweights, self.logL, self.labels = self.values[1:], self.logweights[1:], self.logL[1:], \
-                                                            self.labels[1:]
+        self.values, self.logweights, self.logL, self.logL_birth, self.labels = self.values[1:], self.logweights[1:], \
+                                                                                self.logL[1:], self.logL_birth[1:], \
+                                                                                self.labels[1:]
         self.currSize -= 1
         return sample
 
@@ -213,10 +239,11 @@ class NSPoints:
 
         """
         idx = self.labels == label
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[idx],
                            logweights=self.logweights[idx],
                            logL=self.logL[idx],
+                           logL_birth=self.logL_birth[idx],
                            labels=self.labels[idx])
         return sample
 
@@ -235,7 +262,7 @@ class NSPoints:
         sample : NSPoints
             The subset of points
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
 
         # If all points have the same label
         if torch.unique(self.labels).shape[0] == 1:
@@ -244,12 +271,14 @@ class NSPoints:
             sample.add_samples(values=self.values[idx],
                                logweights=self.logweights[idx],
                                logL=self.logL[idx],
+                               logL_birth=self.logL_birth[idx],
                                labels=self.labels[idx])
 
         else:
-            labels = torch.multinomial(volumes / torch.sum(volumes), num_samples=n_samples, replacement=True)
+            labels = torch.multinomial(volumes, num_samples=n_samples, replacement=True)
             # Calculate the number of samples to take from each label
             n_samples_per_label = torch.bincount(labels)
+            #print(f"n_samples_per_label: {n_samples_per_label}, live points per cluster, {torch.bincount(self.labels)}")
             sample = self.get_samples_from_labels(n_samples_per_label)
         return sample
 
@@ -266,22 +295,24 @@ class NSPoints:
         sample : NSPoints
             The subset of points
         """
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         for label, n_samples in enumerate(n_samples_per_label):
             if n_samples > 0:
                 subset = self.label_subset(label)
                 if subset.get_size() <= 1:
                     idx = [0] * n_samples
                 else:
-                    assert n_samples <= subset.get_size(), "Number of samples must be less than the number of points in the subset"
-                    idx = choice(subset.currSize, n_samples.item(), replace=False)
+                    #assert n_samples <= subset.get_size(), "Number of samples must be less than the number of points in the subset"
+                    idx = choice(subset.currSize, n_samples.item(), replace=True)
 
                 try:
                     sample.add_samples(values=subset.values[idx],
                                        logweights=subset.logweights[idx],
                                        logL=subset.logL[idx],
+                                       logL_birth=subset.logL_birth[idx],
                                        labels=subset.labels[idx])
                 except IndexError:
+                    print(f"Error in get_samples_from_labels. n_samples = {n_samples}, subset.currSize = {subset.currSize}")
                     raise IndexError
 
         return sample
@@ -316,17 +347,34 @@ class NSPoints:
             The subset of points
         """
         idx = self.labels == label
-        sample = NSPoints(self.nparams)
+        sample = NSPoints(self.nparams, device=self.device)
         sample.add_samples(values=self.values[idx],
                            logweights=self.logweights[idx],
                            logL=self.logL[idx],
+                           logL_birth=self.logL_birth[idx],
                            labels=self.labels[idx])
         sample.currSize = self.logL[idx].shape[0]
         return sample
 
+    def empty(self):
+        """
+        Empty the sample
+        """
+        self.values = torch.zeros([0, self.nparams], device=self.device)
+        self.logweights = torch.zeros(size=(0,), device=self.device)
+        self.logL = torch.ones(size=(0,), device=self.device)
+        self.logL_birth = torch.ones(size=(0,), device=self.device)
+        self.currSize = 0
+        self.labels = torch.zeros(size=(0,), device=self.device, dtype=torch.int64)
+        gc.collect()
+
     def get_logL(self):
         self._sort()
         return self.logL
+
+    def get_logL_birth(self):
+        self._sort()
+        return self.logL_birth
 
     def get_log_weights(self):
         self._sort()

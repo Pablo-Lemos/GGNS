@@ -60,13 +60,6 @@ def test_clustering(sampler='base', ndims=2):
             params=params,
             clustering=True,
             verbose=False)
-    elif sampler == 'dev':
-        ns = HamiltonianNS(
-            nlive=25 * ndims,
-            loglike=get_loglike,
-            params=params,
-            clustering=True,
-            verbose=True)
 
     # Run the sampler
     ns.run()
@@ -101,15 +94,6 @@ class ClusteringTest(unittest.TestCase):
         self.assertAlmostEqual(logZ,
                                np.log(1 / 10 ** ndims),
                                delta=10*logZerr)
-
-    # def test_dev(self):
-    #     ndims = 16
-    #     logZ, logZerr = test_clustering(sampler='dev', ndims=ndims)
-    #     print(f"True logZ: {np.log(1 / 10 ** ndims)}")
-    #     self.assertAlmostEqual(logZ,
-    #                            np.log(1 / 10 ** ndims),
-    #                            delta=10*logZerr)
-
 
 if __name__ == '__main__':
     unittest.main()

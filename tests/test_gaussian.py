@@ -1,11 +1,10 @@
 import unittest
 import torch
 import numpy as np
-from gradNS import Param, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, HamiltonianNS
+from gradNS import Param, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, HamiltonianNS, HamiltonianStaticNS
 
 def test_nested_sampling(sampler='base', ndims=2):
-    assert sampler in ['base', 'ellipsoidal', 'slice', 'dynamic', 'hamiltonian', 'dev'], 'Test not implemented for this ' \
-                                                                                  'sampler'
+    assert sampler in ['base', 'ellipsoidal', 'slice', 'dynamic', 'hamiltonian', 'hamiltonian_static', 'dev'], 'Test not implemented for this sampler'
     mvn = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims),
                                                  covariance_matrix=torch.diag(0.2 * torch.ones(ndims))
                                                  )
@@ -50,6 +49,14 @@ def test_nested_sampling(sampler='base', ndims=2):
             nlive=25 * ndims,
             loglike=mvn.log_prob,
             params=params,
+            rejection_fraction=1.1,
+            clustering=False,
+            verbose=False)
+    elif sampler == 'hamiltonian_static':
+        ns = HamiltonianStaticNS(
+            nlive=25 * ndims,
+            loglike=mvn.log_prob,
+            params=params,
             clustering=False,
             verbose=False)
     elif sampler == 'dev':
@@ -57,8 +64,8 @@ def test_nested_sampling(sampler='base', ndims=2):
             nlive=25 * ndims,
             loglike=mvn.log_prob,
             params=params,
-            clustering=True,
-            verbose=True)
+            clustering=False,
+            verbose=False)
 
     # Run the sampler
     ns.run()
@@ -97,6 +104,13 @@ class GaussianTest(unittest.TestCase):
     def test_hamiltonian(self):
         ndims = 2
         logZ, logZerr = test_nested_sampling(sampler='hamiltonian', ndims=ndims)
+        self.assertAlmostEqual(logZ,
+                               np.log(1 / 10 ** ndims),
+                               delta=10*logZerr)
+
+    def test_hamiltonian_static(self):
+        ndims = 2
+        logZ, logZerr = test_nested_sampling(sampler='hamiltonian_static', ndims=ndims)
         self.assertAlmostEqual(logZ,
                                np.log(1 / 10 ** ndims),
                                delta=10*logZerr)

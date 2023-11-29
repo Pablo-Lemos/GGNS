@@ -34,7 +34,7 @@ class EllipsoidalNS(NestedSampler):
         super().__init__(loglike, params, nlive, tol, verbose=verbose, clustering=clustering, device=device)
         self.eff = eff
         if clustering:
-            raise NotImplementedError("Clustering not implemented for MultiNest")
+            raise NotImplementedError("Clustering not implemented for Ellipsoidal")
 
     def fit_normal(self):
         """
@@ -71,9 +71,10 @@ class EllipsoidalNS(NestedSampler):
             newlike = self.loglike(values)
             self.like_evals += 1
 
-        sample = NSPoints(self.nparams)
-        sample.add_samples(values=values.reshape(1, -1),
-                           logL=newlike.reshape(1), #torch.tensor([newlike], dtype = dtype),
+        sample = NSPoints(self.nparams, device=self.device)
+        sample.add_samples(values=values.unsqueeze(0),
+                           logL=newlike.unsqueeze(0),
                            logweights=torch.ones(1, device=self.device))
 
         return sample
+
