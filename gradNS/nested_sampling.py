@@ -211,7 +211,7 @@ class NestedSampler:
         # Calculate log likelihood
         logL = torch.zeros(npoints, dtype=dtype, device=self.device)
         for i, sample in enumerate(prior_samples):
-            logL[i] = self.loglike(sample.to(self.device))
+            logL[i] = self.loglike(sample.to(dtype).to(self.device))
 
         # Placeholder weights (will be calculated when the point is killed)
         logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
@@ -262,6 +262,7 @@ class NestedSampler:
         else:
             raise ValueError("theta must be 1 or 2 dimensional")
         theta = theta.clone().detach().requires_grad_(True)
+        theta = theta.to(dtype).to(self.device)
         loglike = self.loglike(theta)
 
         # Calculate the score when the point is outside the prior range
@@ -274,7 +275,9 @@ class NestedSampler:
         v_ref = v_ref / (torch.norm(v_ref, dim=-1, keepdim=True) + 1e-10)
         in_prior = self.is_in_prior(theta)
 
-        score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
+        #score = torch.autograd.grad(loglike, theta, torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
+        score = torch.autograd.grad(loglike.to(self.device), theta.to(self.device), torch.ones_like(loglike, dtype=dtype, device=self.device))[0]
+        #score =  score.to(dtype).to(self.device)
 
         with torch.no_grad():
             score[~in_prior] = v_ref[~in_prior]

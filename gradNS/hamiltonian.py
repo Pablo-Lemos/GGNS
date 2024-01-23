@@ -81,7 +81,7 @@ class HamiltonianNS(DynamicNestedSampler):
         position : torch.Tensor
             The initial position
         velocity : torch.Tensor
-            The initial velocity
+            The initial vecocity
         min_like : float
             The minimum likelihood
         """
@@ -284,9 +284,9 @@ class HamiltonianNS(DynamicNestedSampler):
         x_ini = point.get_values()
 
         # Initalize arrays
-        active = torch.ones(x_ini.shape[0], dtype=torch.bool)
-        new_x = torch.zeros_like(x_ini, dtype=dtype)
-        new_loglike = torch.zeros(x_ini.shape[0], dtype=dtype)
+        active = torch.ones(x_ini.shape[0], dtype=torch.bool, device=self.device)
+        new_x = torch.zeros_like(x_ini, dtype=dtype, device=self.device)
+        new_loglike = torch.zeros(x_ini.shape[0], dtype=dtype, device=self.device)
 
         accepted = False
         while not accepted:
@@ -310,13 +310,13 @@ class HamiltonianNS(DynamicNestedSampler):
                 self.dt = clip(self.dt * 0.9, 1e-5, 10)
                 if self.verbose: print("Decreasing dt to ", self.dt,
                                        "out_frac = ", out_frac, "active = ", torch.sum(active).item())
-                active = torch.ones(x_ini.shape[0], dtype=torch.bool)
+                active = torch.ones(x_ini.shape[0], dtype=torch.bool, device=self.device)
             elif (out_frac < 0.05) and (torch.sum(active).item() >= max(2, len(active) // 2)):
             #elif (out_frac < 0.01) and (torch.sum(active).item() > len(active) // 2):
                 self.dt = clip(self.dt * 1.1, 1e-5, 10)
                 if self.verbose: print("Increasing dt to ", self.dt,
                                        "out_frac = ", out_frac, "active = ", torch.sum(active).item())
-                active = torch.ones(x_ini.shape[0], dtype=torch.bool)
+                active = torch.ones(x_ini.shape[0], dtype=torch.bool, device=self.device)
             else:
                 in_prior = self.is_in_prior(new_x)
                 # Count the number of points that have not been accepted

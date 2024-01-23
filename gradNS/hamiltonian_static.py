@@ -119,6 +119,7 @@ class HamiltonianStaticNS(NestedSampler):
             p_x, grad_p_x = self.get_score(x)
 
             # Check if the point is inside the slice
+            p_x = p_x.to(self.device)
             reflected = p_x <= log_slice_height
 
             outside = reflected + ~in_prior
@@ -176,6 +177,7 @@ class HamiltonianStaticNS(NestedSampler):
                 self.dt *= 1.5
                 if self.verbose: print('dt increased to', self.dt)
 
+            new_loglike = new_loglike.to(self.device)
             accepted = new_loglike > min_like and self.is_in_prior(new_value)
 
         sample = NSPoints(self.nparams, device=self.device)
