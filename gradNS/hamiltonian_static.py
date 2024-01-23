@@ -1,6 +1,7 @@
 import torch
 from gradNS.nested_sampling import NestedSampler
 from gradNS.param import Param, NSPoints
+import pickle
 
 # Default floating point type
 dtype = torch.float32
@@ -39,6 +40,48 @@ class HamiltonianStaticNS(NestedSampler):
         self.n_in = 0
         self.n_out = 0
 
+    def save(self, filename):
+        """
+        Save the current state of the sampler (including dt for the Hamiltonian NS)
+        Parameters
+        ----------
+        filename: str
+          The name of the file to save the sampler state to
+        """
+
+        d = {'dead_points': self.dead_points,
+             'live_points': self.live_points,
+             'like_evals': self.like_evals,
+             'n_accepted': self.n_accepted,
+             'cluster_volumes': self.cluster_volumes,
+             'n_clusters': self.n_clusters,
+             'xlogL': self.xlogL,
+             'summaries': self.summaries,
+             'dt': self.dt}
+
+        with open(filename, 'wb') as f:
+            pickle.dump(d, f)
+
+    def load(self, filename):
+        """
+        Load the current state of the sampler (including dt for the Hamiltonian NS)
+        Parameters
+        ----------
+        filename: str
+          The name of the file to load the sampler state from
+        """
+        with open(filename, 'rb') as f:
+            d = pickle.load(f)
+
+        self.dead_points = d['dead_points']
+        self.live_points = d['live_points']
+        self.like_evals = d['like_evals']
+        self.n_accepted = d['n_accepted']
+        self.cluster_volumes = d['cluster_volumes']
+        self.n_clusters = d['n_clusters']
+        self.xlogL = d['xlogL']
+        self.summaries = d['summaries']
+        self.dt = d['dt']
 
     def slice_sampling(self, log_slice_height, initial_x):
         """
