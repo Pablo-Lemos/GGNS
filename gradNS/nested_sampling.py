@@ -14,6 +14,8 @@ import anesthetic
 from math import log, exp
 import os
 import tracemalloc
+import pickle
+import gc
 
 # Default floating point type
 dtype = torch.float64
@@ -110,39 +112,39 @@ class NestedSampler:
         self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
 
-    # def save(self, filename):
-    #     """
-    #     Save the current state of the sampler
-    #     Parameters
-    #     ----------
-    #     filename: str
-    #       The name of the file to save the sampler state to
-    #     """
-    #
-        # d = {'dead_points': self.dead_points,
-        #         'live_points': self.live_points,
-        #         'like_evals': self.like_evals,
-        #         'n_accepted': self.n_accepted,
-        #         'cluster_volumes': self.cluster_volumes,
-        #         'n_clusters': self.n_clusters,
-        #         'xlogL': self.xlogL,
-        #         'summaries': self.summaries}
-        #
-        # with open(filename, 'wb') as f:
-        #     pickle.dump(d, f)
+    def save(self, filename):
+        """
+        Save the current state of the sampler
+        Parameters
+        ----------
+        filename: str
+          The name of the file to save the sampler state to
+        """
 
-    # def load(self, filename):
-    #     with open(filename, 'rb') as f:
-    #         d = pickle.load(f)
-    #
-    #     self.dead_points = d['dead_points']
-    #     self.live_points = d['live_points']
-    #     self.like_evals = d['like_evals']
-    #     self.n_accepted = d['n_accepted']
-    #     self.cluster_volumes = d['cluster_volumes']
-    #     self.n_clusters = d['n_clusters']
-    #     self.xlogL = d['xlogL']
-    #     self.summaries = d['summaries']
+        d = {'dead_points': self.dead_points,
+             'live_points': self.live_points,
+             'like_evals': self.like_evals,
+             'n_accepted': self.n_accepted,
+             'cluster_volumes': self.cluster_volumes,
+             'n_clusters': self.n_clusters,
+             'xlogL': self.xlogL,
+             'summaries': self.summaries}
+
+        with open(filename, 'wb') as f:
+            pickle.dump(d, f)
+
+    def load(self, filename):
+        with open(filename, 'rb') as f:
+            d = pickle.load(f)
+
+        self.dead_points = d['dead_points']
+        self.live_points = d['live_points']
+        self.like_evals = d['like_evals']
+        self.n_accepted = d['n_accepted']
+        self.cluster_volumes = d['cluster_volumes']
+        self.n_clusters = d['n_clusters']
+        self.xlogL = d['xlogL']
+        self.summaries = d['summaries']
 
     def add_prior(self, prior):
         """
@@ -552,20 +554,20 @@ class NestedSampler:
 
             curr_xlogL = self.xlogL[-1] - torch.max(self.xlogL)
             #print(curr_xlogL)
-            converged = curr_xlogL < log(self.tol)
             epsilon = self._get_epsilon()
             max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
+            converged = curr_xlogL < log(self.tol)
+            #converged = max_epsilon < self.tol
 
             next_multiple = (prev_multiple // self.nlive_ini + 1) * self.nlive_ini
             #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
             #if self.verbose:
             if self.n_accepted >= next_multiple:
                 if write_to_file:
+                    self.save(f'{filename}.pkl')
                     self.dead_points.write_to_file(f'{filename}')
-                    #del self.dead_points
-                    #self.dead_points = NSPoints(self.nparams, device=self.device)
                     self.dead_points.empty()
-                    #gc.collect()
+                    gc.collect()
                 prev_multiple = next_multiple
                 if self.clustering:
                     self.find_clusters()
@@ -588,6 +590,7 @@ class NestedSampler:
         run_time = time.time() - start_time
 
         if write_to_file:
+            self.save(f'{filename}.pkl')
             self.dead_points.write_to_file(f'{filename}')
             self.dead_points.read_from_file(f'{filename}')
 
