@@ -116,75 +116,76 @@ class NestedSamplingSummaries:
         Returns
         -------
         """
-        np = torch.as_tensor(np, dtype=torch.float64, device=self.device)
-        # log Z
-        self.logZ = torch.logsumexp(torch.cat([self.logZ.reshape(1),
-                                               logL + self.logXp[label] -
-                                               torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
+        with torch.no_grad():
+            np = torch.as_tensor(np, dtype=torch.float64, device=self.device)
+            # log Z
+            self.logZ = torch.logsumexp(torch.cat([self.logZ.reshape(1),
+                                                   logL + self.logXp[label] -
+                                                   torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
 
-        # log Zp
-        self.logZp[label] = torch.logsumexp(torch.cat([self.logZp[label].reshape(1),
-                                                       logL + self.logXp[label] -
-                                                       torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
+            # log Zp
+            self.logZp[label] = torch.logsumexp(torch.cat([self.logZp[label].reshape(1),
+                                                           logL + self.logXp[label] -
+                                                           torch.log(torch.as_tensor(np + 1., device=self.device))]), 0)
 
-        # log Z2
-        self.logZ2 = torch.logsumexp(torch.cat([self.logZ2.reshape(1),
-                                                self.logZXp[label] + logL + torch.log(
-                                                        torch.as_tensor(2. / (np + 1.), device=self.device)),
-                                                self.logXpXq[label, label] + 2 * logL + torch.log(
-                                                        torch.as_tensor(2. / (np + 1.) / (np + 2.), device=self.device))
-                                                ]), 0)
+            # log Z2
+            self.logZ2 = torch.logsumexp(torch.cat([self.logZ2.reshape(1),
+                                                    self.logZXp[label] + logL + torch.log(
+                                                            torch.as_tensor(2. / (np + 1.), device=self.device)),
+                                                    self.logXpXq[label, label] + 2 * logL + torch.log(
+                                                            torch.as_tensor(2. / (np + 1.) / (np + 2.), device=self.device))
+                                                    ]), 0)
 
-        # log Zp^2
-        self.logZp2[label] = torch.logsumexp(torch.cat([self.logZp2[label].reshape(1),
-                                                        self.logZpXp[label] + logL + torch.log(
-                                                               torch.as_tensor(2. / (np + 1.), device=self.device)),
-                                                        self.logXpXq[label, label] + 2 * logL + torch.log(
-                                                               torch.as_tensor(2. / (np + 1.) / (np + 2.),
-                                                                               device=self.device))
-                                                        ]), 0)
+            # log Zp^2
+            self.logZp2[label] = torch.logsumexp(torch.cat([self.logZp2[label].reshape(1),
+                                                            self.logZpXp[label] + logL + torch.log(
+                                                                   torch.as_tensor(2. / (np + 1.), device=self.device)),
+                                                            self.logXpXq[label, label] + 2 * logL + torch.log(
+                                                                   torch.as_tensor(2. / (np + 1.) / (np + 2.),
+                                                                                   device=self.device))
+                                                            ]), 0)
 
-        # log ZXp
-        self.logZXp[label] = torch.logsumexp(
-            torch.cat([self.logZXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
-                       self.logXpXq[label, label] + logL + torch.log(
-                           torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
-                       ]), 0)
+            # log ZXp
+            self.logZXp[label] = torch.logsumexp(
+                torch.cat([self.logZXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
+                           self.logXpXq[label, label] + logL + torch.log(
+                               torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
+                           ]), 0)
 
-        # log ZXq
-        for l in range(self.n_clusters):
-            if l != label:
-                self.logZXp[l] = torch.logsumexp(torch.cat([self.logZXp[l].reshape(1),
-                                                            self.logXpXq[label, l] + logL - torch.log(
-                                                                   torch.as_tensor((np + 1.), device=self.device))
-                                                               ]), 0)
+            # log ZXq
+            for l in range(self.n_clusters):
+                if l != label:
+                    self.logZXp[l] = torch.logsumexp(torch.cat([self.logZXp[l].reshape(1),
+                                                                self.logXpXq[label, l] + logL - torch.log(
+                                                                       torch.as_tensor((np + 1.), device=self.device))
+                                                                   ]), 0)
 
 
-        # log ZpXp
-        self.logZpXp[label] = torch.logsumexp(
-            torch.cat([self.logZpXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
-                       self.logXpXq[label, label] + logL + torch.log(
-                           torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
-                       ]), 0)
+            # log ZpXp
+            self.logZpXp[label] = torch.logsumexp(
+                torch.cat([self.logZpXp[label].reshape(1) + torch.log(torch.as_tensor(np / (np + 1.), device=self.device)),
+                           self.logXpXq[label, label] + logL + torch.log(
+                               torch.as_tensor(np / (np + 1.) / (np + 2.), device=self.device))
+                           ]), 0)
 
-        #assert torch.allclose(self.logZ, torch.logsumexp(self.logZp, 0)), f'{self.logZ} != {torch.logsumexp(self.logZp, 0)}'
-        # if not torch.allclose(torch.logsumexp(self.logZp, 0), self.logZ):
-        #     raise ValueError("logZp does not sum to logZ")
+            #assert torch.allclose(self.logZ, torch.logsumexp(self.logZp, 0)), f'{self.logZ} != {torch.logsumexp(self.logZp, 0)}'
+            # if not torch.allclose(torch.logsumexp(self.logZp, 0), self.logZ):
+            #     raise ValueError("logZp does not sum to logZ")
 
-        # log Xp
-        self.logXp[label] = self.logXp[label] + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
+            # log Xp
+            self.logXp[label] = self.logXp[label] + torch.log(torch.as_tensor(np / (np + 1.), device=self.device))
 
-        # log Xp^2
-        self.logXpXq[label, label] = self.logXpXq[label, label] + torch.log(
-            torch.as_tensor(np / (np + 2.), device=self.device))
+            # log Xp^2
+            self.logXpXq[label, label] = self.logXpXq[label, label] + torch.log(
+                torch.as_tensor(np / (np + 2.), device=self.device))
 
-        # log XpXq
-        for l in range(self.n_clusters):
-            if l != label:
-                self.logXpXq[label, l] = self.logXpXq[label, l] + torch.log(
-                    torch.as_tensor(np / (np + 1.), device=self.device))
+            # log XpXq
+            for l in range(self.n_clusters):
+                if l != label:
+                    self.logXpXq[label, l] = self.logXpXq[label, l] + torch.log(
+                        torch.as_tensor(np / (np + 1.), device=self.device))
 
-                self.logXpXq[l, label] = self.logXpXq[label, l].clone()
+                    self.logXpXq[l, label] = self.logXpXq[label, l].clone()
 
     def split(self, cluster, labels):
         """

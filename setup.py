@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='gradNS',
-      version='0.1',
+      version='0.1.1',
       description='Differentiable Nested Sampler',
       url='https://github.com/Pablo-Lemos/torchNS.git',
       author='Pablo Lemos',

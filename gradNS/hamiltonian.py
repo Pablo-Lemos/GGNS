@@ -4,6 +4,7 @@ from gradNS.param import Param, NSPoints
 from numpy import clip, pi
 import tracemalloc
 import gc
+import pickle
 
 # Default floating point type
 dtype = torch.float64
@@ -27,6 +28,50 @@ class HamiltonianNS(DynamicNestedSampler):
         # Standard deviation for the velocity noise
         self.sigma_vel = sigma_vel
 
+
+    def save(self, filename):
+        """
+        Save the current state of the sampler (including dt for the Hamiltonian NS)
+        Parameters
+        ----------
+        filename: str
+          The name of the file to save the sampler state to
+        """
+
+        d = {'dead_points': self.dead_points,
+             'live_points': self.live_points,
+             'like_evals': self.like_evals,
+             'n_accepted': self.n_accepted,
+             'cluster_volumes': self.cluster_volumes,
+             'n_clusters': self.n_clusters,
+             'xlogL': self.xlogL,
+             'summaries': self.summaries,
+             'dt': self.dt}
+
+        with open(filename, 'wb') as f:
+            pickle.dump(d, f)
+
+    def load(self, filename):
+        """
+        Load the current state of the sampler (including dt for the Hamiltonian NS)
+        Parameters
+        ----------
+        filename: str
+          The name of the file to load the sampler state from
+        """
+        with open(filename, 'rb') as f:
+            d = pickle.load(f)
+
+        self.dead_points = d['dead_points']
+        self.live_points = d['live_points']
+        self.like_evals = d['like_evals']
+        self.n_accepted = d['n_accepted']
+        self.cluster_volumes = d['cluster_volumes']
+        self.n_clusters = d['n_clusters']
+        self.xlogL = d['xlogL']
+        self.summaries = d['summaries']
+        self.dt = d['dt']
+
     def hamiltonian_slice_sampling(self, position, velocity, min_like):
         """
         Hamiltonian Slice Sampling algorithm for PyTorch.
@@ -46,11 +91,6 @@ class HamiltonianNS(DynamicNestedSampler):
         n_in_steps = 0
         # Keep track of the number of reflections for each point
         num_reflections = torch.zeros(position.shape[0], dtype=torch.int64, device=self.device)
-
-        # A list of positions, log-likelihoods and masks for each point
-        # pos_ls = []
-        # logl_ls = []
-        # mask = []
 
         pos_tensor = torch.zeros((0, position.shape[0], self.nparams), dtype=dtype, device=self.device)
         logl_tensor = torch.zeros((0, position.shape[0]), dtype=dtype, device=self.device)
@@ -137,8 +177,6 @@ class HamiltonianNS(DynamicNestedSampler):
                 velocity[~outside] = velocity[~outside] * (1 + self.sigma_vel * r)
 
             # Update the number of points inside an outside
-            #n_out_steps += (outside * ~killed).sum()
-            #n_in_steps += (~outside * ~killed).sum()
             n_out_steps += outside.sum()
             n_in_steps += (~outside).sum()
 
@@ -177,9 +215,6 @@ class HamiltonianNS(DynamicNestedSampler):
             logl_out = torch.tensor(-1e30, dtype=torch.float64) * torch.ones(position.shape[0], dtype=dtype, device=self.device)
         # Otherwise, return a random point from the list
         else:
-            # positions = torch.stack(pos_ls, dim=0)
-            # loglikes = torch.stack(logl_ls, dim=0)
-            # masks = torch.stack(mask, dim=0)
             pos_out = torch.zeros(position.shape, dtype=dtype, device=self.device)
             logl_out = torch.zeros(position.shape[0], dtype=dtype, device=self.device)
 
@@ -209,9 +244,6 @@ class HamiltonianNS(DynamicNestedSampler):
         del in_prior
         del killed
         del logl_tensor
-        # del loglikes
-        # del mask
-        # del masks
         del mask_tensor
         del memory
         del n_in_steps
@@ -220,7 +252,6 @@ class HamiltonianNS(DynamicNestedSampler):
         del num_reflections
         del outside
         del p_x
-        # del pos_ls
         del pos_tensor
         del position
         del reflected
@@ -230,6 +261,7 @@ class HamiltonianNS(DynamicNestedSampler):
         gc.collect()
 
         return pos_out, logl_out, out_frac
+
 
     def find_new_sample_batch(self, min_loglike, n_points, labels=None):
         """
@@ -311,7 +343,7 @@ class HamiltonianNS(DynamicNestedSampler):
         del point
         del x_ini
 
-        #gc.collect()
+        gc.collect()
 
         return sample
 
