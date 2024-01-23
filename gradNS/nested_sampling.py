@@ -134,6 +134,13 @@ class NestedSampler:
             pickle.dump(d, f)
 
     def load(self, filename):
+        """
+        Load the current state of the sampler (including dt for the Hamiltonian NS)
+        Parameters
+        ----------
+        filename: str
+          The name of the file to load the sampler state from
+        """
         with open(filename, 'rb') as f:
             d = pickle.load(f)
 
@@ -495,9 +502,6 @@ class NestedSampler:
         for _ in range(self.get_nlive()-1):
             self.kill_point()
 
-        # Convert the prior weights to posterior weights
-        # self.dead_points.weights *= torch.exp(
-        #     self.dead_points.get_logL() - self.summaries.get_logZ())
         log_weights = self.dead_points.get_log_weights() + self.dead_points.get_logL() - self.summaries.get_logZ()
         self.dead_points.logweights = log_weights
 
@@ -523,8 +527,6 @@ class NestedSampler:
         self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini, initial_step=True))
 
         # Run the algorithm
-        max_epsilon = 1e1000
-        curr_xlogL = 0.
         converged = False
 
         # From printing and clustering updates
@@ -543,25 +545,15 @@ class NestedSampler:
 
         nsteps = 0
         while ((self.n_clusters > 0) and (not converged)):
-            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
-            # print(f"Memory usage pre move: {current / 10 ** 6} MiB")
-
             self.move_one_step()
-            #gc.collect()
-
-            # current, _ = tracemalloc.get_traced_memory()  # Get memory usage
-            # print(f"Memory usage post move: {current / 10 ** 6} MiB")
+            gc.collect()
 
             curr_xlogL = self.xlogL[-1] - torch.max(self.xlogL)
-            #print(curr_xlogL)
             epsilon = self._get_epsilon()
             max_epsilon = torch.sum(epsilon) if self.clustering else epsilon
             converged = curr_xlogL < log(self.tol)
-            #converged = max_epsilon < self.tol
 
             next_multiple = (prev_multiple // self.nlive_ini + 1) * self.nlive_ini
-            #if (self.n_accepted % self.nlive_ini == 0) and (self.n_accepted > 0):
-            #if self.verbose:
             if self.n_accepted >= next_multiple:
                 if write_to_file:
                     self.save(f'{filename}.pkl')
