@@ -5,7 +5,7 @@ from numpy.random import randint, choice
 from gradNS.utils import save_to_file, read_from_file
 
 # Default floating point type
-dtype = torch.float64
+dtype = torch.float32
 
 class Param():
     """

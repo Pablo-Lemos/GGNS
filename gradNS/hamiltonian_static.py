@@ -3,7 +3,7 @@ from gradNS.nested_sampling import NestedSampler
 from gradNS.param import Param, NSPoints
 
 # Default floating point type
-dtype = torch.float64
+dtype = torch.float32
 
 
 class HamiltonianStaticNS(NestedSampler):

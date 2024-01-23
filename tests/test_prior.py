@@ -3,21 +3,22 @@ import torch
 import numpy as np
 from gradNS import Param, Prior, NestedSampler, EllipsoidalNS, SliceNS, DynamicNestedSampler, HamiltonianNS
 
+dtype = torch.float32
 
 def test_clustering(sampler='base', ndims=2):
     assert sampler in ['base', 'hamiltonian'], 'Test not implemented for this ' \
                                                                                   'sampler'
-    mvn1 = torch.distributions.MultivariateNormal(loc=-2 * torch.ones(ndims, dtype=torch.float64),
+    mvn1 = torch.distributions.MultivariateNormal(loc=-2 * torch.ones(ndims, dtype=dtype),
                                                   covariance_matrix=torch.diag(
-                                                      0.2 * torch.ones(ndims, dtype=torch.float64)))
+                                                      0.2 * torch.ones(ndims, dtype=dtype)))
 
-    mvn2 = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims, dtype=torch.float64),
+    mvn2 = torch.distributions.MultivariateNormal(loc=2 * torch.ones(ndims, dtype=dtype),
                                                   covariance_matrix=torch.diag(
-                                                      0.2 * torch.ones(ndims, dtype=torch.float64)))
+                                                      0.2 * torch.ones(ndims, dtype=dtype)))
 
-    mvn_like = torch.distributions.MultivariateNormal(loc=torch.zeros(ndims, dtype=torch.float64),
+    mvn_like = torch.distributions.MultivariateNormal(loc=torch.zeros(ndims, dtype=dtype),
                                                   covariance_matrix=torch.diag(
-                                                      0.2 * torch.ones(ndims, dtype=torch.float64)))
+                                                      0.2 * torch.ones(ndims, dtype=dtype)))
 
     def get_logprior(theta):
         return torch.logsumexp(torch.stack([mvn1.log_prob(theta), mvn2.log_prob(theta)]), dim=0, keepdim=False) - torch.log(torch.tensor(2.0))

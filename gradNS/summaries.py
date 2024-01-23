@@ -2,7 +2,7 @@ import torch
 from numpy import bincount
 
 # Default floating point type
-dtype = torch.float64
+dtype = torch.float32
 
 class NestedSamplingSummaries:
     """
@@ -117,7 +117,7 @@ class NestedSamplingSummaries:
         -------
         """
         with torch.no_grad():
-            np = torch.as_tensor(np, dtype=torch.float64, device=self.device)
+            np = torch.as_tensor(np, dtype=dtype, device=self.device)
             # log Z
             self.logZ = torch.logsumexp(torch.cat([self.logZ.reshape(1),
                                                    logL + self.logXp[label] -

@@ -18,7 +18,7 @@ import pickle
 import gc
 
 # Default floating point type
-dtype = torch.float64
+dtype = torch.float32
 
 class Prior():
     """

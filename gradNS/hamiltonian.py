@@ -7,7 +7,7 @@ import gc
 import pickle
 
 # Default floating point type
-dtype = torch.float64
+dtype = torch.float32
 
 
 class HamiltonianNS(DynamicNestedSampler):
@@ -212,7 +212,7 @@ class HamiltonianNS(DynamicNestedSampler):
         # If no point has reached the minimum number of reflections, return a point with zero likelihood
         if pos_tensor.shape[0] == 0:
             pos_out = torch.zeros_like(x, dtype=dtype, device=self.device)
-            logl_out = torch.tensor(-1e30, dtype=torch.float64) * torch.ones(position.shape[0], dtype=dtype, device=self.device)
+            logl_out = torch.tensor(-1e30, dtype=dtype) * torch.ones(position.shape[0], dtype=dtype, device=self.device)
         # Otherwise, return a random point from the list
         else:
             pos_out = torch.zeros(position.shape, dtype=dtype, device=self.device)
