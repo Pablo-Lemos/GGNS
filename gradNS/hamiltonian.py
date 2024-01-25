@@ -131,7 +131,7 @@ class HamiltonianNS(DynamicNestedSampler):
             pos_tensor = pos_tensor[:, ~killed]
             logl_tensor = logl_tensor[:, ~killed]
             mask_tensor = mask_tensor[:, ~killed]
-            killed = killed[~killed]
+            #killed = killed[~killed]
 
             if len(x) == 0:
                 return torch.zeros_like(position, dtype=dtype, device=self.device), \
@@ -190,7 +190,7 @@ class HamiltonianNS(DynamicNestedSampler):
             pos_tensor = pos_tensor[:, ~killed]
             logl_tensor = logl_tensor[:, ~killed]
             mask_tensor = mask_tensor[:, ~killed]
-            killed = killed[~killed]
+            #killed = killed[~killed]
 
             killed = num_reflections < self.min_reflections
             # Get the indices of killed points and remove them from the original_indices list

@@ -194,11 +194,6 @@ class NestedSampler:
                                                  size=npoints,
                                                  dtype=dtype,
                                                  device=self.device)
-                # elif param.prior_type == 'Gaussian':
-                #     prior_samples[:,i] = torch.normal(mean=param.prior[0],
-                #                                       std=param.prior[1],
-                #                                       size=npoints,
-                #                                       device=self.device)
                 else:
                     raise ValueError('Prior type not recognised, only Uniform is implemented for now')
         else:
@@ -209,9 +204,7 @@ class NestedSampler:
             prior_samples = self.prior.sample(npoints)
 
         # Calculate log likelihood
-        logL = torch.zeros(npoints, dtype=dtype, device=self.device)
-        for i, sample in enumerate(prior_samples):
-            logL[i] = self.loglike(sample)
+        logL = self.loglike(prior_samples)
 
         # Placeholder weights (will be calculated when the point is killed)
         logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)
