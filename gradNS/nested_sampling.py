@@ -189,7 +189,7 @@ class NestedSampler:
                     self.paramnames.append(param.name)
                     self.paramlabels.append(param.label)
                 if param.prior_type == 'Uniform':
-                    prior_samples[:,i] = uniform(low=param.prior[0],
+                    prior_samples[:, i] = uniform(low=param.prior[0],
                                                  high=param.prior[1],
                                                  size=npoints,
                                                  dtype=dtype,
