@@ -131,13 +131,14 @@ class HamiltonianNS(DynamicNestedSampler):
             pos_tensor = pos_tensor[:, ~killed]
             logl_tensor = logl_tensor[:, ~killed]
             mask_tensor = mask_tensor[:, ~killed]
-            killed = killed[~killed]
+            #killed = killed[~killed]
 
             if len(x) == 0:
                 return torch.zeros_like(position, dtype=dtype, device=self.device), \
                        -1e30 * torch.ones(position.shape[0], dtype=dtype, device=self.device), 1
 
             # Check if the point is inside the slice
+            #print(torch.max(x, dim=1)[0], p_x, min_like)
             reflected = p_x <= min_like
 
             outside = reflected + ~in_prior
@@ -160,7 +161,8 @@ class HamiltonianNS(DynamicNestedSampler):
             velocity[outside, :] -= delta_velocity[outside, :]
 
             # Update the number of positions
-            num_reflections += reflected
+            num_reflections += reflected #+ ~in_prior
+            #print(num_reflections, reflected, in_prior)
             if torch.min(num_reflections) > self.min_reflections:
                 start_saving = True
                 pos_tensor = torch.cat((pos_tensor, x.unsqueeze(0).clone()), dim=0)
@@ -308,6 +310,7 @@ class HamiltonianNS(DynamicNestedSampler):
 #            if (out_frac > 0.1) and (torch.sum(active).item() > len(active) // 2):
             if (out_frac > 0.15) and (torch.sum(active).item() >= max(2, len(active) // 2)):
                 self.dt = clip(self.dt * 0.9, 1e-5, 10)
+                #self.dt = self.dt * 0.9
                 if self.verbose: print("Decreasing dt to ", self.dt,
                                        "out_frac = ", out_frac, "active = ", torch.sum(active).item())
                 active = torch.ones(x_ini.shape[0], dtype=torch.bool, device=self.device)

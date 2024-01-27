@@ -85,7 +85,7 @@ class DynamicNestedSampler(NestedSampler):
         -------
         """
         newsample = self.find_new_sample_batch(min_logL, n_points=n_points, labels=labels)
-        newsample.logL_birth = min_logL * torch.ones(n_points, dtype=dtype)
+        newsample.logL_birth = min_logL * torch.ones(n_points, dtype=dtype, device=self.device)
         self.xlogL = torch.cat((self.xlogL, min_logL + self.summaries.get_logX()))
         assert torch.max(newsample.get_logL()) > min_logL, "New sample has lower likelihood than old one"
         self.n_accepted += n_points
