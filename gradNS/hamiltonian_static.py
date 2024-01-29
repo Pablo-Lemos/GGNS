@@ -62,26 +62,6 @@ class HamiltonianStaticNS(NestedSampler):
         with open(filename, 'wb') as f:
             pickle.dump(d, f)
 
-    def load(self, filename):
-        """
-        Load the current state of the sampler (including dt for the Hamiltonian NS)
-        Parameters
-        ----------
-        filename: str
-          The name of the file to load the sampler state from
-        """
-        with open(filename, 'rb') as f:
-            d = pickle.load(f)
-
-        self.dead_points = d['dead_points']
-        self.live_points = d['live_points']
-        self.like_evals = d['like_evals']
-        self.n_accepted = d['n_accepted']
-        self.cluster_volumes = d['cluster_volumes']
-        self.n_clusters = d['n_clusters']
-        self.xlogL = d['xlogL']
-        self.summaries = d['summaries']
-        self.dt = d['dt']
 
     def slice_sampling(self, log_slice_height, initial_x):
         """

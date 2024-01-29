@@ -112,6 +112,8 @@ class NestedSampler:
         self._lower = torch.tensor([p.prior[0] for p in self.params], dtype=dtype, device=self.device)
         self._upper = torch.tensor([p.prior[1] for p in self.params], dtype=dtype, device=self.device)
 
+        self._resume = False
+
     def save(self, filename):
         """
         Save the current state of the sampler
@@ -121,7 +123,7 @@ class NestedSampler:
           The name of the file to save the sampler state to
         """
 
-        d = {'dead_points': self.dead_points,
+        d = {#'dead_points': self.dead_points,
              'live_points': self.live_points,
              'like_evals': self.like_evals,
              'n_accepted': self.n_accepted,
@@ -141,10 +143,13 @@ class NestedSampler:
         filename: str
           The name of the file to load the sampler state from
         """
+        if filename[-4] != '.pkl':
+            filename = filename + '.pkl'
         with open(filename, 'rb') as f:
             d = pickle.load(f)
 
-        self.dead_points = d['dead_points']
+        self._resume = True
+        #self.dead_points = d['dead_points']
         self.live_points = d['live_points']
         self.like_evals = d['like_evals']
         self.n_accepted = d['n_accepted']
@@ -524,7 +529,7 @@ class NestedSampler:
         """ The main function of the algorithm. Runs the Nested sampler"""
 
         start_time = time.time()
-        tracemalloc.start()  # Start memory profiling
+        # tracemalloc.start()  # Start memory profiling
 
         # Generate live points
         self.live_points.add_nspoint(self.sample_prior(npoints=self.nlive_ini, initial_step=True))
@@ -538,12 +543,13 @@ class NestedSampler:
         if write_to_file and filename is None:
             raise ValueError("Filename must be provided if write_to_file is True")
 
-        if os.path.exists(f'{filename}_values.txt'):
-            os.remove(f'{filename}_values.txt')
-            os.remove(f'{filename}_logweights.txt')
-            os.remove(f'{filename}_labels.txt')
-            os.remove(f'{filename}_logL.txt')
-            os.remove(f'{filename}_logL_birth.txt')
+        if (os.path.exists(f'{filename}_values.txt') and (not self._resume)):
+            raise ValueError(f"Filename {filename} exists, and previous run was not loaded")
+        #    os.remove(f'{filename}_values.txt')
+        #    os.remove(f'{filename}_logweights.txt')
+        #    os.remove(f'{filename}_labels.txt')
+        #    os.remove(f'{filename}_logL.txt')
+        #    os.remove(f'{filename}_logL_birth.txt')
 
 
         nsteps = 0
