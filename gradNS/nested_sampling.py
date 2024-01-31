@@ -214,9 +214,10 @@ class NestedSampler:
             prior_samples = self.prior.sample(npoints)
 
         # Calculate log likelihood
-        logL = torch.zeros(npoints, dtype=dtype, device=self.device)
-        for i, sample in enumerate(prior_samples):
-            logL[i] = self.loglike(sample.to(dtype).to(self.device))
+        # logL = torch.zeros(npoints, dtype=dtype, device=self.device)
+        # for i, sample in enumerate(prior_samples):
+        #     logL[i] = self.loglike(sample.to(dtype).to(self.device))
+        logL = self.loglike(prior_samples)
 
         # Placeholder weights (will be calculated when the point is killed)
         logweights = torch.zeros(len(logL), dtype=dtype, device=self.device)

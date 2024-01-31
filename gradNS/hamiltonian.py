@@ -161,12 +161,12 @@ class HamiltonianNS(DynamicNestedSampler):
             new_value[active], new_loglike[active], n_out[active], n_in[active] = self.slice_sampling(min_loglike, curr_values[active], dts[active])
             frac_out = n_out / (n_in + n_out)
 
-            frac_out[~active] = 0.3
-            mask_increase = frac_out < 0.1
-            mask_decrease = frac_out > 0.5
+            frac_out[~active] = 0.1
+            mask_increase = frac_out < 0.05
+            mask_decrease = frac_out > 0.15
 
-            dts[mask_increase] *= 1.5
-            dts[mask_decrease] *= 0.5
+            dts[mask_increase] *= 1.1
+            dts[mask_decrease] *= 0.9
 
             new_loglike = new_loglike.to(self.device)
             accepted = (new_loglike > min_loglike) * self.is_in_prior(new_value)
