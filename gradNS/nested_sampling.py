@@ -380,7 +380,7 @@ class NestedSampler:
         """
 
         newlike = -torch.inf
-        while newlike < min_like:
+        while newlike <= min_like:
             newsample = self.sample_prior(npoints=1)
             newlike = newsample.get_logL()[0]
             self.n_tried += 1
